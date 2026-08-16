@@ -113,12 +113,11 @@ class _RedeemScreenState extends State<RedeemScreen> {
           const SizedBox(height: 24),
           const Divider(),
           const SizedBox(height: 12),
-          const Text('如何获得解锁码',
+          const Text('关于解锁码',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
           const SizedBox(height: 8),
           const Text(
-            '成为开发者的 GitHub 赞助者（按月订阅，开发者免手续费）后，'
-            '开发者会发送专属解锁码给你，在此输入即可解锁。',
+            '解锁码由开发者分发，输入即可解锁全部高级功能。',
             style: TextStyle(color: Colors.grey, fontSize: 13),
           ),
         ],

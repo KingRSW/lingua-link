@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'subscription_service.dart';
 
 class PaywallScreen extends StatefulWidget {
@@ -22,15 +21,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
     _Feature(Icons.speed_rounded, '优先通道', '高峰期优先翻译队列'),
   ];
 
-  Future<void> _openSponsors() async {
-    final url = Uri.parse(
-      'https://github.com/sponsors/${SubscriptionService.sponsorHandle}',
-    );
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
-    }
-  }
-
   Future<void> _redeem() async {
     setState(() {
       _busy = true;
@@ -51,7 +41,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
   Widget build(BuildContext context) {
     final premium = SubscriptionService.instance.isPremium;
     return Scaffold(
-      appBar: AppBar(title: const Text('高级功能订阅')),
+      appBar: AppBar(title: const Text('高级功能')),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
@@ -63,7 +53,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
               ),
             ),
           const SizedBox(height: 8),
-          const Text('解锁后立即可用：',
+          const Text('高级功能包含：',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 12),
           ..._features.map(
@@ -79,14 +69,8 @@ class _PaywallScreenState extends State<PaywallScreen> {
           const Text('如何解锁',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
-          ElevatedButton.icon(
-            onPressed: _openSponsors,
-            icon: const Icon(Icons.favorite),
-            label: const Text('成为 GitHub 赞助者（按月订阅，开发者免手续费）'),
-          ),
-          const SizedBox(height: 6),
           const Text(
-            '赞助后，开发者会发送一个解锁码；在下方输入即可解锁。',
+            '输入解锁码即可解锁全部高级功能。',
             style: TextStyle(color: Colors.grey, fontSize: 13),
           ),
           const SizedBox(height: 12),
@@ -114,14 +98,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
               padding: const EdgeInsets.only(top: 12),
               child: Text(_msg!, style: const TextStyle(fontSize: 14)),
             ),
-          const SizedBox(height: 24),
-          TextButton(
-            onPressed: () async {
-              await SubscriptionService.instance.toggleDevUnlock();
-              setState(() {});
-            },
-            child: Text(premium ? '（测试）取消解锁' : '（测试）临时解锁'),
-          ),
         ],
       ),
     );

@@ -1,11 +1,10 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 高级功能订阅服务（纯前端实现，无需后端）
+/// 高级功能解锁服务（纯前端实现，无需后端）
 ///
 /// 设计：
-/// - 付费通道用 GitHub Sponsors：开发者免费开通、GitHub 不抽成、按月订阅。
-/// - 解锁方式：赞助者由开发者发放「解锁码」，在网页里输入即解锁。
-///   校验在本地完成（格式 + 校验和），因此可在纯静态的 GitHub Pages 上运行。
+/// - 高级功能通过「解锁码」在本地解锁，无需任何付费通道。
+/// - 校验在本地完成（格式 + 校验和），因此可在纯静态的 GitHub Pages 上运行。
 /// - 说明：纯前端校验可被技术用户绕过，对独立小工具足够；
 ///   若要做到「不可绕过」，可加一个 serverless 校验函数（如 Cloudflare Workers，免费额度足够）。
 class SubscriptionService {
@@ -13,10 +12,6 @@ class SubscriptionService {
   static final SubscriptionService instance = SubscriptionService._();
 
   static const String _prefsKey = 'lingua_premium_v1';
-
-  /// 你的 GitHub 用户名（赞助页地址 https://github.com/sponsors/<这里>）
-  /// ⚠️ 上线前改成你自己的用户名。
-  static const String sponsorHandle = 'KingRSW';
 
   bool _isPremium = false;
   bool get isPremium => _isPremium;
@@ -57,9 +52,6 @@ class SubscriptionService {
     return true;
   }
 
-  /// 仅供本地测试：临时切换解锁状态。生产环境请把这个方法和 Paywall 里的「测试」按钮删掉。
-  Future<void> toggleDevUnlock() async => setPremium(!_isPremium);
-
   // --- 校验和（务必与 tools/gen_code.dart 保持一致）---
   static const String _salt = 'LinguaLink-2026-StaticSite';
   static String _checksum(String seed) {
@@ -76,7 +68,7 @@ class SubscriptionService {
     return hex.substring(0, 6);
   }
 
-  /// 生成解锁码（与 gen_code.dart 同算法），用于给赞助者发卡。
+  /// 生成解锁码（与 gen_code.dart 同算法），用于分发解锁高级功能。
   static String generateCode(String middle) {
     final m = middle.toUpperCase();
     return 'LINGUA-$m-${_checksum(m)}';
