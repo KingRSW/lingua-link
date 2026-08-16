@@ -96,3 +96,10 @@ temp_ipa_check/
 test/
 （翻译软件安装包）/
 
+# Signing credentials / private keys (NEVER commit to a public repo)
+*.key
+*.csr
+*.p12
+*.pfx
+*.mobileprovision
+
