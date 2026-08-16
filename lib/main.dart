@@ -29,9 +29,9 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'subscription_service.dart';
 import 'paywall.dart';
+import 'redeem_screen.dart';
 
 void main() {
   // 把 Dart 异常显示到屏幕上,方便排查 iOS 27 上的白屏(而不是静默白屏)
@@ -1181,6 +1181,16 @@ class _TranslatePageState extends State<TranslatePage> {
         ),
         actions: [
           IconButton(
+            tooltip: '兑换码',
+            icon: const Icon(Icons.redeem_outlined, color: Color(0xFF5D6CFF)),
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const RedeemScreen()),
+              );
+              if (mounted) setState(() {});
+            },
+          ),
+          IconButton(
             tooltip: '高级功能',
             icon: Icon(
               Icons.workspace_premium_outlined,
@@ -1188,9 +1198,12 @@ class _TranslatePageState extends State<TranslatePage> {
                   ? const Color(0xFFFFB300)
                   : const Color(0xFF5D6CFF),
             ),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const PaywallScreen()),
-            ),
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const PaywallScreen()),
+              );
+              if (mounted) setState(() {});
+            },
           ),
           if (SubscriptionService.instance.isPremium)
             Padding(
