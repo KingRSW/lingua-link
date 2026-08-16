@@ -53,16 +53,25 @@ class SubscriptionService {
   }
 
   // --- 校验和（务必与 tools/gen_code.dart 保持一致）---
+  // 关键：用 _mul32 拆 16-bit 半段做 32-bit 乘法，避免 dart2js 编译到 JS 时
+  // 把 (h * p) 算成 IEEE-754 双精度（h≈2^32, p≈2^24 时乘积超 2^53 丢精度），
+  // 导致 Web 端校验和与 Dart VM 端（Dart int=64-bit）算出来的不一致。
   static const String _salt = 'LinguaLink-2026-StaticSite';
+  static int _mul32(int h, int p) {
+    final lo = (h & 0xFFFF) * p; // < 2^40，53-bit 双精度内安全
+    final hi = ((h >> 16) & 0xFFFF) * p;
+    return (lo + ((hi & 0xFFFF) << 16)) & 0xFFFFFFFF;
+  }
+
   static String _checksum(String seed) {
     int h = 0x811c9dc5; // FNV offset basis
     final s = seed + _salt;
     for (int i = 0; i < s.length; i++) {
       h ^= s.codeUnitAt(i);
-      h = (h * 16777619) & 0xFFFFFFFF; // FNV-1a 32-bit
+      h = _mul32(h, 16777619); // FNV-1a 32-bit（JS-safe）
     }
     h = (h ^ (h >> 13)) & 0xFFFFFFFF;
-    h = (h * 0x5bd1e995) & 0xFFFFFFFF;
+    h = _mul32(h, 0x5bd1e995); // murmur 混合（JS-safe）
     h = (h ^ (h >> 15)) & 0xFFFFFFFF;
     final hex = h.toRadixString(36).toUpperCase().padLeft(7, '0');
     return hex.substring(0, 6);
