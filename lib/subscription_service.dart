@@ -16,7 +16,7 @@ class SubscriptionService {
 
   /// 你的 GitHub 用户名（赞助页地址 https://github.com/sponsors/<这里>）
   /// ⚠️ 上线前改成你自己的用户名。
-  static const String sponsorHandle = 'YOUR_GITHUB_USERNAME';
+  static const String sponsorHandle = 'KingRSW';
 
   bool _isPremium = false;
   bool get isPremium => _isPremium;
