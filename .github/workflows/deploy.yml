@@ -1,0 +1,45 @@
+# 自动把 Lingua Link 网页版部署到 GitHub Pages
+# 用法：把本工程推送到 GitHub 的 main 分支，GitHub 会自动构建网页并发布。
+# 首次发布后，去 仓库 Settings → Pages → Source 选 "GitHub Actions" 即可。
+name: Deploy Web to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.8'
+          channel: 'stable'
+      - run: flutter pub get
+      # 项目页地址是 https://<用户>.github.io/<仓库名>/，base-href 必须带仓库名
+      - name: Build web release
+        run: flutter build web --release --base-href="/${{ github.event.repository.name }}/"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

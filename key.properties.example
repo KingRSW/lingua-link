@@ -1,0 +1,7 @@
+# Copy this file to key.properties and fill in your real values (do NOT commit key.properties)
+storePassword=change_me_store_password
+keyPassword=change_me_key_password
+keyAlias=my_key_alias
+# storeFile is resolved relative to the project root via rootProject.file().
+# Example: my-release-key.jks (if the keystore is in the project root)
+storeFile=my-release-key.jks

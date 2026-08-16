@@ -1,0 +1,98 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Signing keys and properties
+/key.properties
+**/key.properties
+*.jks
+
+# Local build artifacts (debug IPAs, APKs, logs) — not for version control
+/build_output/
+build_output.log
+
+# ============ Platform build caches (keep repo lean / avoid GB commits) ============
+
+# Android
+android/app/build/
+android/.gradle/
+android/captures/
+android/local.properties
+**/android/**/build/
+*.apk
+*.aar
+
+# iOS / Xcode
+ios/build/
+ios/dmg_temp/
+ios/Runner.xcworkspace/
+ios/.symlinks/
+ios/Pods/
+ios/Flutter/Flutter.framework/
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+**/ios/**/xcworkspace
+**/ios/**/xcuserdata
+**/ios/**/*.ipa
+**/ios/**/*.zip
+**/ios/**/*.dSYM
+**/ios/**/*.dSYM.zip
+
+# macOS
+macos/Flutter/Flutter.framework/
+macos/Pods/
+macos/Runner.xcworkspace/
+macos/build/
+
+# Linux / Windows build outputs
+linux/build/
+windows/build/
+
+# Local scratch / leftover dirs (not part of the app)
+temp_check/
+temp_ipa_check/
+test/
+（翻译软件安装包）/
+

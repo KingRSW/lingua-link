@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>application-identifier</key>
+    <string>com.example.translateApp</string>
+    <key>aps-environment</key>
+    <string>development</string>
+    <key>create-info</key>
+    <dict>
+        <key>creation-date</key>
+        <date>2026-08-10T16:38:00Z</date>
+        <key>creator</key>
+        <string>Xcode</string>
+    </dict>
+    <key>entitlements</key>
+    <dict>
+        <key>application-identifier</key>
+        <string>com.example.translateApp</string>
+        <key>get-task-allow</key>
+        <true/>
+        <key>keychain-access-groups</key>
+        <array>
+            <string>com.example.translateApp</string>
+        </array>
+    </dict>
+    <key>format-version</key>
+    <integer>1</integer>
+    <key>provisioned-profiles</key>
+    <dict>
+        <key>com.example.translateApp</key>
+        <dict>
+            <key>development-expiration</key>
+            <date>2026-08-24T16:38:00Z</date>
+            <key>profile-type</key>
+            <string>Development</string>
+        </dict>
+    </dict>
+    <key>team-identifier</key>
+    <string>RQUNYZ64T4</string>
+</dict>
+</plist>
