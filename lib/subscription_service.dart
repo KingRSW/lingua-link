@@ -51,7 +51,7 @@ class SubscriptionService {
     final middle = parts[1];
     final given = parts[2];
     if (middle.length != 6 || given.length != 6) return false;
-    if (!RegExp(r'^[0-9A-Z]{6}$').hasMatch(middle + given)) return false;
+    if (!RegExp(r'^[0-9A-Z]{12}$').hasMatch(middle + given)) return false;
     if (_checksum(middle) != given) return false;
     setPremium(true);
     return true;
