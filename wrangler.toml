@@ -1,0 +1,24 @@
+# Cloudflare Workers 配置 —— 部署 lib 外的 worker.js 后端
+# 用法：
+#   1. 安装 wrangler： npm install -g wrangler   (或 npx wrangler)
+#   2. 登录：           wrangler login
+#   3. 部署：           wrangler deploy
+#   4. 注入密钥(可选)：  wrangler secret put WX_MCH_ID  /  wrangler secret put WX_API_KEY ...
+#
+# 部署成功后，把得到的 *.workers.dev 地址填进前端：
+#   flutter build web --release --dart-define=PAYMENT_DEV=false \
+#     --dart-define=PAYMENT_BACKEND=https://lingua-link-payment.<你的子域>.workers.dev
+
+name = "lingua-link-payment"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+
+# 目前 worker.js 用内存 Map 存订单（重启即丢，仅适合联调）。
+# 要生产级持久化，建一个 KV 命名空间并取消下面注释：
+# [[kv_namespaces]]
+# binding = "ORDERS"
+# id = "在此填 wrangler kv namespace create ORDERS 返回的 id"
+
+# 微信/支付宝商户号等密钥请用 wrangler secret put 注入，不要写进本文件。
+# [vars]
+#   ENV = "production"
