@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import 'payment/models.dart';
+import 'payment/payment_provider.dart';
 import 'subscription_service.dart';
 
 class PaywallScreen extends StatefulWidget {
@@ -10,8 +13,10 @@ class PaywallScreen extends StatefulWidget {
 
 class _PaywallScreenState extends State<PaywallScreen> {
   final _codeCtrl = TextEditingController();
+  final PaymentProvider _provider = WechatAlipayProvider();
   String? _msg;
   bool _busy = false;
+  Plan? _payingPlan;
 
   static const List<_Feature> _features = [
     _Feature(Icons.text_fields_rounded, '长文本翻译', '单次可翻译 5000 字（免费版仅 500 字）'),
@@ -33,7 +38,45 @@ class _PaywallScreenState extends State<PaywallScreen> {
       _msg = ok ? '✅ 已解锁高级功能！' : '❌ 解锁码无效，请检查后重试';
     });
     if (ok) {
-      await Future.delayed(const Duration(seconds: 1), () => Navigator.of(context).pop());
+      await Future.delayed(const Duration(seconds: 1));
+      if (mounted) Navigator.of(context).pop();
+    }
+  }
+
+  /// 走支付流程：下单 → 拉起收银台 → 轮询权益。
+  Future<void> _pay(Plan plan) async {
+    setState(() {
+      _busy = true;
+      _payingPlan = plan;
+      _msg = null;
+    });
+    try {
+      final order = await _provider.createOrder(plan);
+      await _provider.launchPay(order);
+
+      // 轮询后端权益状态（用户支付完成后后端才会返回 isPremium=true）。
+      Entitlement e = const Entitlement(isPremium: false);
+      for (int i = 0; i < 30; i++) {
+        await Future.delayed(const Duration(seconds: 2));
+        e = await _provider.queryEntitlement(order.orderId);
+        if (e.isPremium) break;
+      }
+
+      if (e.isPremium) {
+        await SubscriptionService.instance.activatePurchase(e);
+        setState(() => _msg = '✅ 会员已开通！');
+        await Future.delayed(const Duration(seconds: 1));
+        if (mounted) Navigator.of(context).pop();
+      } else {
+        setState(() => _msg = '⏳ 暂未检测到支付成功，可在支付完成后重新进入本页刷新');
+      }
+    } catch (err) {
+      setState(() => _msg = '⚠️ 支付出错：$err');
+    } finally {
+      setState(() {
+        _busy = false;
+        _payingPlan = null;
+      });
     }
   }
 
@@ -66,11 +109,22 @@ class _PaywallScreenState extends State<PaywallScreen> {
           const SizedBox(height: 20),
           const Divider(),
           const SizedBox(height: 8),
-          const Text('如何解锁',
+          const Text('选择会员套餐',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 12),
+          ...Plan.values.map((plan) => _PlanCard(
+                plan: plan,
+                busy: _busy && _payingPlan == plan,
+                onTap: _busy ? null : () => _pay(plan),
+              )),
+          const SizedBox(height: 16),
+          const Divider(),
+          const SizedBox(height: 12),
+          const Text('使用解锁码',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
           const Text(
-            '输入解锁码即可解锁全部高级功能。',
+            '如果你有开发者分发的解锁码，可在此输入直接解锁。',
             style: TextStyle(color: Colors.grey, fontSize: 13),
           ),
           const SizedBox(height: 12),
@@ -99,6 +153,40 @@ class _PaywallScreenState extends State<PaywallScreen> {
               child: Text(_msg!, style: const TextStyle(fontSize: 14)),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _PlanCard extends StatelessWidget {
+  const _PlanCard({required this.plan, required this.busy, this.onTap});
+  final Plan plan;
+  final bool busy;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        title: Text(plan.label, style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: Text('¥${plan.priceCny.toStringAsFixed(0)}'),
+        trailing: busy
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : ElevatedButton(
+                onPressed: onTap,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF5D6CFF),
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('微信/支付宝'),
+              ),
       ),
     );
   }

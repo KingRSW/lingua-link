@@ -1,20 +1,29 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 高级功能解锁服务（纯前端实现，无需后端）
+import 'payment/models.dart';
+
+/// 会员权益服务：前端唯一的「高级功能」状态入口。
 ///
 /// 设计：
-/// - 高级功能通过「解锁码」在本地解锁，无需任何付费通道。
-/// - 校验在本地完成（格式 + 校验和），因此可在纯静态的 GitHub Pages 上运行。
-/// - 说明：纯前端校验可被技术用户绕过，对独立小工具足够；
-///   若要做到「不可绕过」，可加一个 serverless 校验函数（如 Cloudflare Workers，免费额度足够）。
+/// - 权益（Entitlement）本地只做缓存，真正真源是后端 worker.js；
+///   付费购买成功后由支付层把后端签发的 Entitlement 写入这里。
+/// - 兑换码（redeemCode）仍是纯本地校验，适合开发者分发 / 灰度 / 补偿，不依赖后端。
+/// - 纯前端校验可被技术用户绕过；若要「不可绕过」，付费权益以后端为准即可
+///   （兑换码场景对独立小工具足够，详见 PAYMENT_SETUP.md）。
 class SubscriptionService {
   SubscriptionService._();
   static final SubscriptionService instance = SubscriptionService._();
 
   static const String _prefsKey = 'lingua_premium_v1';
 
-  bool _isPremium = false;
-  bool get isPremium => _isPremium;
+  Entitlement _entitlement = const Entitlement(isPremium: false);
+  Entitlement get entitlement => _entitlement;
+
+  /// 是否高级会员（由 entitlement 派生）。
+  bool get isPremium => _entitlement.isPremium;
 
   /// 免费版 / 高级版 单次翻译字数上限
   int get freeLimit => 500;
@@ -23,21 +32,41 @@ class SubscriptionService {
   Future<void> init() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      _isPremium = prefs.getBool(_prefsKey) ?? false;
+      final raw = prefs.getString(_prefsKey);
+      if (raw == null) {
+        _entitlement = const Entitlement(isPremium: false);
+        return;
+      }
+      final map = jsonDecode(raw) as Map<String, dynamic>;
+      _entitlement = Entitlement(
+        isPremium: map['isPremium'] as bool? ?? false,
+        expireAt: map['expireAt'] == null
+            ? null
+            : DateTime.parse(map['expireAt'] as String),
+        source: map['source'] as String?,
+      );
     } catch (_) {
-      _isPremium = false;
+      _entitlement = const Entitlement(isPremium: false);
     }
   }
 
-  Future<void> setPremium(bool value) async {
-    _isPremium = value;
+  Future<void> _persist(Entitlement e) async {
+    _entitlement = e;
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_prefsKey, value);
+      await prefs.setString(
+        _prefsKey,
+        jsonEncode({
+          'isPremium': e.isPremium,
+          'expireAt': e.expireAt?.toIso8601String(),
+          'source': e.source,
+        }),
+      );
     } catch (_) {}
   }
 
-  /// 校验解锁码：格式 LINGUA-XXXXXX-XXXXXX，末段为前段的校验和。
+  /// 兑换码解锁（本地校验，详情见 _checksum）。
+  /// 返回是否成功；成功后写入本地 entitlement（source = 'redeem'）。
   bool redeemCode(String raw) {
     final code = raw.trim().toUpperCase();
     final parts = code.split('-');
@@ -48,9 +77,14 @@ class SubscriptionService {
     if (middle.length != 6 || given.length != 6) return false;
     if (!RegExp(r'^[0-9A-Z]{12}$').hasMatch(middle + given)) return false;
     if (_checksum(middle) != given) return false;
-    setPremium(true);
+    unawaited(
+      _persist(const Entitlement(isPremium: true, source: 'redeem')),
+    );
     return true;
   }
+
+  /// 付费购买成功后由支付层调用，写入后端签发的权益（source = 'purchase'）。
+  Future<void> activatePurchase(Entitlement e) => _persist(e);
 
   // --- 校验和（务必与 tools/gen_code.dart 保持一致）---
   // 关键：用 _mul32 拆 16-bit 半段做 32-bit 乘法，避免 dart2js 编译到 JS 时
