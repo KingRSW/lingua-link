@@ -32,6 +32,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'subscription_service.dart';
 import 'paywall.dart';
 import 'redeem_screen.dart';
+import 'payment/payment_provider.dart';
 
 void main() {
   // 把 Dart 异常显示到屏幕上,方便排查 iOS 27 上的白屏(而不是静默白屏)
@@ -480,6 +481,17 @@ class _TranslatePageState extends State<TranslatePage> {
   final FlutterTts _flutterTts = FlutterTts();
   bool _isSpeaking = false;
 
+  // AI 润色（PRO 权益）
+  String _polishedText = '';
+  bool _polishing = false;
+  String _polishScene = 'natural';
+  final List<Map<String, String>> _polishScenes = [
+    {'id': 'natural', 'name': '地道'},
+    {'id': 'business', 'name': '商务'},
+    {'id': 'academic', 'name': '学术'},
+    {'id': 'concise', 'name': '简洁'},
+  ];
+
   final List<Map<String, String>> _langList = [
     {'name': '中文', 'code': 'zh-CN'},
     {'name': '英语', 'code': 'en'},
@@ -732,6 +744,58 @@ class _TranslatePageState extends State<TranslatePage> {
     messenger?.showSnackBar(
       const SnackBar(content: Text('已复制到剪贴板')),
     );
+  }
+
+  Future<void> _aiPolish() async {
+    // PRO 权益：未开通会员则引导去付费墙
+    if (!SubscriptionService.instance.isPremium) {
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const PaywallScreen()),
+      );
+      if (mounted) setState(() {});
+      return;
+    }
+    if (_resultText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先翻译出内容再润色')),
+      );
+      return;
+    }
+    final backend = kPaymentBackendBaseUrl;
+    if (backend.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('AI 润色需部署后端（配置 PAYMENT_BACKEND）')),
+      );
+      return;
+    }
+    setState(() {
+      _polishing = true;
+      _polishedText = '';
+    });
+    try {
+      final resp = await http
+          .post(
+            Uri.parse('$backend/ai-polish'),
+            headers: {'content-type': 'application/json'},
+            body: json.encode({'text': _resultText, 'scene': _polishScene}),
+          )
+          .timeout(const Duration(seconds: 30));
+      final data = json.decode(utf8.decode(resp.bodyBytes));
+      if (!mounted) return;
+      if (resp.statusCode != 200 || data['polished'] == null) {
+        throw Exception(data['error'] ?? '润色失败');
+      }
+      setState(() => _polishedText = data['polished'] as String);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('润色失败：$e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _polishing = false);
+    }
   }
 
   void clearAll() {
@@ -1117,6 +1181,80 @@ class _TranslatePageState extends State<TranslatePage> {
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Text('AI 润色',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFB300),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text('PRO',
+                      style: TextStyle(
+                          color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              children: _polishScenes.map((s) {
+                final selected = _polishScene == s['id'];
+                return ChoiceChip(
+                  label: Text(s['name']!),
+                  selected: selected,
+                  onSelected: (_) => setState(() => _polishScene = s['id']!),
+                  selectedColor: const Color(0xFF5D6CFF),
+                  labelStyle: TextStyle(
+                    color: selected ? Colors.white : const Color(0xFF4E5875),
+                  ),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 12),
+            _polishing
+                ? const Center(child: CircularProgressIndicator())
+                : LiquidGlassButton(
+                    onPressed: _resultText.isEmpty ? null : _aiPolish,
+                    isPrimary: true,
+                    accentColor: const Color(0xFF5D6CFF),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    child: const Text('一键润色'),
+                  ),
+            if (_polishedText.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color.fromRGBO(245, 246, 255, 0.9),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: const Color.fromRGBO(93, 108, 255, 0.3),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('润色结果',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF5D6CFF),
+                          fontWeight: FontWeight.w600,
+                        )),
+                    const SizedBox(height: 6),
+                    Text(_polishedText,
+                        style: const TextStyle(fontSize: 15, height: 1.5)),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),

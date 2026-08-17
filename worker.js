@@ -85,10 +85,17 @@ function aliSignContent(params) {
     .join('&');
 }
 
+// 跨域头（前端 Pages 站点跨域调用本 worker 需要）
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+  'Access-Control-Allow-Headers': 'content-type',
+};
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
+    headers: { 'content-type': 'application/json; charset=utf-8', ...corsHeaders },
   });
 }
 
@@ -302,6 +309,60 @@ function entitlement(orderId) {
 }
 
 // ============================================================
+// 5) AI 润色（PRO 权益，接便宜 LLM）
+// ============================================================
+const SCENE_PROMPTS = {
+  natural: '把下面这段翻译润色得更地道、自然、符合母语表达习惯，不要改变原意。只输出润色后的文本本身。',
+  business: '把下面这段翻译润色得更商务、专业、得体，适合工作沟通。只输出润色后的文本本身。',
+  academic: '把下面这段翻译润色得更学术、严谨、书面化。只输出润色后的文本本身。',
+  concise: '把下面这段翻译润色得更简洁、明了，去掉冗余。只输出润色后的文本本身。',
+};
+
+async function aiPolish(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'bad json' }, 400);
+  }
+  const text = (body.text || '').toString().slice(0, 4000);
+  const scene = SCENE_PROMPTS[body.scene] ? body.scene : 'natural';
+  if (!text) return json({ error: 'empty text' }, 400);
+
+  // TODO(生产): 防盗刷/防绕过——AI 润色是付费权益，应在请求带会员 token 并在此处校验
+  // （当前权益仅存前端，后端未记录，故先做演示级开放；上线前务必加权益校验+限频）。
+
+  const key = env.LLM_API_KEY;
+  if (!key) {
+    // DEV 模拟：未配置 LLM 密钥时返回占位，便于前端联调流程。
+    return json({ polished: text + '（DEV 模拟润色：配置 LLM_API_KEY 后生效）' });
+  }
+  try {
+    const base = env.LLM_BASE_URL || 'https://api.deepseek.com';
+    const model = env.LLM_MODEL || 'deepseek-chat';
+    const resp = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: SCENE_PROMPTS[scene] },
+          { role: 'user', content: text },
+        ],
+        temperature: 0.7,
+        max_tokens: 2000,
+      }),
+    });
+    const data = await resp.json();
+    const content = data?.choices?.[0]?.message?.content?.trim();
+    if (!content) return json({ error: 'llm_empty' }, 502);
+    return json({ polished: content });
+  } catch (e) {
+    return json({ error: 'llm_failed', detail: String(e) }, 502);
+  }
+}
+
+// ============================================================
 // 路由入口
 // ============================================================
 export default {
@@ -310,6 +371,10 @@ export default {
     const p = url.pathname;
     const channel = url.searchParams.get('channel') || 'wechat';
 
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: corsHeaders });
+    }
+    if (p === '/ai-polish' && request.method === 'POST') return aiPolish(request, env);
     if (p === '/create-order' && request.method === 'POST') return createOrder(request, env);
     if (p === '/pay' && request.method === 'GET')
       return payPage(url.searchParams.get('orderId'), channel, env);
