@@ -17,8 +17,8 @@
 
 // 套餐价格（与前端 lib/payment/models.dart 对齐；正式以商户平台配置为准）
 const PLANS = {
-  monthly: { label: '按月会员', priceCny: 6.0, days: 30 },
-  yearly: { label: '按年会员', priceCny: 60.0, days: 365 },
+  monthly: { label: '按月会员', priceCny: 9.0, days: 30 },
+  yearly: { label: '按年会员', priceCny: 68.0, days: 365 },
   lifetime: { label: '永久会员', priceCny: 198.0, days: null },
 };
 

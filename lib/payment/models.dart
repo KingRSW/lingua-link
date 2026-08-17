@@ -5,8 +5,8 @@ library payment_models;
 
 /// 会员套餐。价格仅为示意，正式以你在微信/支付宝商户平台配置为准。
 enum Plan {
-  monthly('monthly', '按月会员', 6.0),
-  yearly('yearly', '按年会员', 60.0),
+  monthly('monthly', '按月会员', 9.0),
+  yearly('yearly', '按年会员', 68.0),
   lifetime('lifetime', '永久会员', 198.0);
 
   const Plan(this.id, this.label, this.priceCny);
