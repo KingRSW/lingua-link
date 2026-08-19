@@ -29,6 +29,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'subscription_service.dart';
 import 'paywall.dart';
 import 'redeem_screen.dart';
@@ -495,6 +496,9 @@ class _TranslatePageState extends State<TranslatePage> {
     {'id': 'concise', 'name': '简洁'},
   ];
 
+  // 术语库（PRO 专属工具，SharedPreferences 持久化：原文词 -> 首选译法）
+  Map<String, String> _glossary = {};
+
   final List<Map<String, String>> _langList = [
     {'name': '中文', 'code': 'zh-CN'},
     {'name': '英语', 'code': 'en'},
@@ -560,6 +564,7 @@ class _TranslatePageState extends State<TranslatePage> {
     });
     _initSpeech();
     _initTts();
+    _loadGlossary();
   }
 
   Future<void> _initSpeech() async {
@@ -753,6 +758,270 @@ class _TranslatePageState extends State<TranslatePage> {
     messenger?.showSnackBar(
       const SnackBar(content: Text('已复制到剪贴板')),
     );
+  }
+
+  // ---- PRO 专属工具 ----
+
+  Future<void> _loadGlossary() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('lingua_glossary_v1');
+      if (raw != null) {
+        final map = jsonDecode(raw) as Map<String, dynamic>;
+        _glossary = map.map((k, v) => MapEntry(k, v as String));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveGlossary() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('lingua_glossary_v1', jsonEncode(_glossary));
+    } catch (_) {}
+  }
+
+  /// 把术语库中的「原文词 -> 首选译法」批量替换到文本中。
+  String _applyGlossary(String text) {
+    var out = text;
+    for (final e in _glossary.entries) {
+      out = out.replaceAll(e.key, e.value);
+    }
+    return out;
+  }
+
+  /// 导出 / 分享：复制为 Markdown 到剪贴板。
+  void _exportResult() {
+    if (_resultText.isEmpty) return;
+    final md = '# 翻译结果\n\n$_resultText\n';
+    Clipboard.setData(ClipboardData(text: md));
+    ScaffoldMessenger.maybeOf(context)
+        ?.showSnackBar(const SnackBar(content: Text('已复制为 Markdown 到剪贴板')));
+  }
+
+  /// 术语库管理弹窗（PRO）。
+  Future<void> _openGlossary() async {
+    final termCtrl = TextEditingController();
+    final replCtrl = TextEditingController();
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: const Text('术语库（PRO）'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: termCtrl,
+                        decoration: const InputDecoration(labelText: '原文词'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: replCtrl,
+                        decoration: const InputDecoration(labelText: '首选译法'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('已添加：'),
+                ),
+                ..._glossary.entries.map(
+                  (e) => ListTile(
+                    dense: true,
+                    title: Text('${e.key} → ${e.value}'),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                      onPressed: () {
+                        _glossary.remove(e.key);
+                        _saveGlossary();
+                        setSt(() {});
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('关闭'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final t = termCtrl.text.trim();
+                final r = replCtrl.text.trim();
+                if (t.isNotEmpty) {
+                  _glossary[t] = r;
+                  _saveGlossary();
+                  termCtrl.clear();
+                  replCtrl.clear();
+                  setSt(() {});
+                }
+              },
+              child: const Text('添加'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  /// 实时语音对话（PRO）：听一句 -> 翻译 -> 语音播报。
+  Future<void> _openVoiceChat() async {
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('实时语音对话（PRO）'),
+        content: const Text('点按下方按钮，说一句话，自动翻译并用语音播报。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _voiceRound(false);
+            },
+            child: const Text('我说（源→目标）'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _voiceRound(true);
+            },
+            child: const Text('对方说（目标→源）'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _voiceRound(bool reverse) async {
+    if (!_speechAvailable) {
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(const SnackBar(content: Text('语音识别不可用，请检查权限')));
+      return;
+    }
+    final fromIdx = reverse ? _toIndex : _fromIndex;
+    final toIdx = reverse ? _fromIndex : _toIndex;
+    final completer = Completer<String>();
+    if (_isListening) await _speech.stop();
+    await _speech.listen(
+      localeId: _speechLocaleMap[_langList[fromIdx]['code']] ?? 'en_US',
+      listenOptions: stt.SpeechListenOptions(listenMode: stt.ListenMode.dictation),
+      onResult: (r) {
+        if (r.finalResult) completer.complete(r.recognizedWords);
+      },
+    );
+    if (!mounted) return;
+    final spoken = await completer.future
+        .timeout(const Duration(seconds: 15), onTimeout: () => '');
+    await _speech.stop();
+    if (spoken.isEmpty) {
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(const SnackBar(content: Text('没听清，请重试')));
+      return;
+    }
+    final translated =
+        await _voiceTranslate(spoken, _langList[fromIdx]['code']!, _langList[toIdx]['code']!);
+    if (!mounted) return;
+    final ttsLang = _ttsLangMap[_langList[toIdx]['code']] ?? 'en-US';
+    await _flutterTts.setLanguage(ttsLang);
+    await _flutterTts.setSpeechRate(0.5);
+    await _flutterTts.speak(translated);
+    setState(() {
+      _inputController.text = spoken;
+      _resultText = translated;
+    });
+  }
+
+  Future<String> _voiceTranslate(String text, String from, String to) async {
+    try {
+      final uri = Uri.https('api.mymemory.translated.net', '/get', {
+        'q': text,
+        'langpair': '$from|$to',
+      });
+      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) return text;
+      final data = json.decode(utf8.decode(response.bodyBytes));
+      final rd = data is Map<String, dynamic> ? data['responseData'] : null;
+      final t = rd is Map<String, dynamic> ? rd['translatedText'] as String? : null;
+      if (t == null || t.isEmpty || t.startsWith('MYMEMORY WARNING')) return text;
+      return t;
+    } catch (_) {
+      return text;
+    }
+  }
+
+  /// 文档翻译（PRO，开发中）。
+  void _openDocument() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('文档翻译（PRO）'),
+        content: const Text('即将支持：上传 PDF/Word/TXT 整篇翻译。需接入 file_picker，开发中。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('知道了')),
+        ],
+      ),
+    );
+  }
+
+  /// 拍照翻译（PRO，开发中）。
+  void _openOcr() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('拍照翻译（PRO）'),
+        content: const Text('即将支持：拍照/选图 OCR 翻译。需接入 image_picker + OCR，开发中。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('知道了')),
+        ],
+      ),
+    );
+  }
+
+  /// 统一的 PRO 工具入口：未开通会员先跳付费墙，否则执行对应功能。
+  void _openProTool(ProFeature tool) {
+    if (!SubscriptionService.instance.isPremium) {
+      if (!mounted) return;
+      Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => const PaywallScreen()));
+      return;
+    }
+    switch (tool) {
+      case ProFeature.export:
+        _exportResult();
+        break;
+      case ProFeature.glossary:
+        _openGlossary();
+        break;
+      case ProFeature.voiceChat:
+        _openVoiceChat();
+        break;
+      case ProFeature.document:
+        _openDocument();
+        break;
+      case ProFeature.ocr:
+        _openOcr();
+        break;
+    }
   }
 
   Future<void> _aiPolish() async {
@@ -1268,6 +1537,53 @@ class _TranslatePageState extends State<TranslatePage> {
                 ),
               ),
             ],
+            const SizedBox(height: 18),
+            const Divider(),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Text('PRO 专属工具',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFB300),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text('PRO',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: ProFeature.values.map((t) {
+                return ActionChip(
+                  avatar: Icon(t.icon, size: 16, color: const Color(0xFF5D6CFF)),
+                  label: Text(t.label),
+                  onPressed: () => _openProTool(t),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 12),
+            if (SubscriptionService.instance.isPremium)
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _resultText.isEmpty
+                      ? null
+                      : () =>
+                          setState(() => _resultText = _applyGlossary(_resultText)),
+                  icon: const Icon(Icons.menu_book_outlined, size: 16),
+                  label: const Text('应用术语库到当前结果'),
+                ),
+              ),
           ],
         ),
       ),

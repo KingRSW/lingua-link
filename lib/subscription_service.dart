@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'payment/models.dart';
@@ -24,6 +25,12 @@ class SubscriptionService {
 
   /// 是否高级会员（由 entitlement 派生）。
   bool get isPremium => _entitlement.isPremium;
+
+  /// 是否拥有某 PRO 专属功能（当前所有 PRO 功能都要求 isPremium）。
+  bool hasPro(ProFeature f) => isPremium;
+
+  /// 全部 PRO 专属工具（用于付费墙展示 / UI 遍历）。
+  static const List<ProFeature> proTools = ProFeature.values;
 
   /// 免费版 / 高级版 单次翻译字数上限
   int get freeLimit => 500;
@@ -115,5 +122,62 @@ class SubscriptionService {
   static String generateCode(String middle) {
     final m = middle.toUpperCase();
     return 'LINGUA-$m-${_checksum(m)}';
+  }
+}
+
+/// PRO 专属功能/工具。
+enum ProFeature {
+  document, // 文档翻译
+  export, // 导出 / 分享
+  glossary, // 术语库
+  voiceChat, // 实时语音对话
+  ocr, // 拍照翻译
+}
+
+/// PRO 功能的展示元数据（标签 / 描述 / 图标）。
+extension ProFeatureMeta on ProFeature {
+  String get label {
+    switch (this) {
+      case ProFeature.document:
+        return '文档翻译';
+      case ProFeature.export:
+        return '导出 / 分享';
+      case ProFeature.glossary:
+        return '术语库';
+      case ProFeature.voiceChat:
+        return '实时语音对话';
+      case ProFeature.ocr:
+        return '拍照翻译';
+    }
+  }
+
+  String get desc {
+    switch (this) {
+      case ProFeature.document:
+        return '上传 PDF/Word/TXT 整篇翻译';
+      case ProFeature.export:
+        return '结果导出 PDF/Word/Markdown 或一键分享';
+      case ProFeature.glossary:
+        return '自定义专业词表，术语保持一致';
+      case ProFeature.voiceChat:
+        return '实时双语语音互译';
+      case ProFeature.ocr:
+        return '拍照 / 选图 OCR 翻译';
+    }
+  }
+
+  IconData get icon {
+    switch (this) {
+      case ProFeature.document:
+        return Icons.description_outlined;
+      case ProFeature.export:
+        return Icons.share_outlined;
+      case ProFeature.glossary:
+        return Icons.menu_book_outlined;
+      case ProFeature.voiceChat:
+        return Icons.record_voice_over_outlined;
+      case ProFeature.ocr:
+        return Icons.camera_alt_outlined;
+    }
   }
 }

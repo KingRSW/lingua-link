@@ -32,6 +32,14 @@ class _PaywallScreenState extends State<PaywallScreen> {
     _Feature('优先通道', '高峰期优先翻译队列'),
   ];
 
+  static const List<_Feature> _proToolFeatures = [
+    _Feature('文档翻译', '上传 PDF/Word/TXT 整篇翻译'),
+    _Feature('导出 / 分享', '结果导出 PDF/Word/Markdown 或一键分享'),
+    _Feature('术语库', '自定义专业词表，术语保持一致'),
+    _Feature('实时语音对话', '实时双语语音互译'),
+    _Feature('拍照翻译', '拍照 / 选图 OCR 翻译'),
+  ];
+
   Future<void> _redeem() async {
     setState(() {
       _busy = true;
@@ -139,6 +147,11 @@ class _PaywallScreenState extends State<PaywallScreen> {
 
           // 权益列表（极简勾选式）
           ..._features.map((f) => _FeatureRow(f: f)),
+          const SizedBox(height: 22),
+          const Text('PRO 专属工具',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: _ink)),
+          const SizedBox(height: 12),
+          ..._proToolFeatures.map((f) => _FeatureRow(f: f)),
           const SizedBox(height: 28),
 
           const Text('选择套餐',
