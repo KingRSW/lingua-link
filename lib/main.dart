@@ -47,7 +47,10 @@ void main() {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text('⚠️ 渲染出错',
-                    style: TextStyle(color: Colors.red, fontSize: 18, fontWeight: FontWeight.bold)),
+                    style: TextStyle(
+                        color: Colors.red,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold)),
                 const SizedBox(height: 12),
                 Text(
                   details.exceptionAsString(),
@@ -147,82 +150,82 @@ class _LiquidGlassButtonState extends State<LiquidGlassButton>
             child: child,
           );
         },
-          child: Opacity(
-            opacity: _disabled ? 0.5 : 1.0,
-            child: ClipRRect(
-              borderRadius: widget.borderRadius,
-              child: Container(
-                padding: widget.padding,
-                decoration: BoxDecoration(
-                  borderRadius: widget.borderRadius,
-                  // 玻璃质感渐变
-                  gradient: widget.isPrimary
-                      ? LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            Color.alphaBlend(
-                                Colors.white.withOpacity(0.35), accent),
-                            accent,
-                          ],
-                        )
-                      : LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.white.withOpacity(_disabled ? 0.4 : 0.78),
-                            Colors.white.withOpacity(_disabled ? 0.25 : 0.48),
-                          ],
-                        ),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(_disabled ? 0.3 : 0.65),
-                    width: 1.2,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: widget.isPrimary
-                          ? accent.withOpacity(0.45)
-                          : Colors.black.withOpacity(0.10),
-                      blurRadius: 24,
-                      offset: const Offset(0, 10),
-                      spreadRadius: widget.isPrimary ? 1 : 0,
-                    ),
-                    BoxShadow(
-                      color: Colors.white.withOpacity(0.55),
-                      blurRadius: 1,
-                      offset: const Offset(0, 1),
-                    ),
-                  ],
+        child: Opacity(
+          opacity: _disabled ? 0.5 : 1.0,
+          child: ClipRRect(
+            borderRadius: widget.borderRadius,
+            child: Container(
+              padding: widget.padding,
+              decoration: BoxDecoration(
+                borderRadius: widget.borderRadius,
+                // 玻璃质感渐变
+                gradient: widget.isPrimary
+                    ? LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color.alphaBlend(
+                              Colors.white.withOpacity(0.35), accent),
+                          accent,
+                        ],
+                      )
+                    : LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.white.withOpacity(_disabled ? 0.4 : 0.78),
+                          Colors.white.withOpacity(_disabled ? 0.25 : 0.48),
+                        ],
+                      ),
+                border: Border.all(
+                  color: Colors.white.withOpacity(_disabled ? 0.3 : 0.65),
+                  width: 1.2,
                 ),
-                child: Stack(
-                  children: [
-                    // 内容
-                    Center(
-                      child: DefaultTextStyle.merge(
-                        style: TextStyle(
+                boxShadow: [
+                  BoxShadow(
+                    color: widget.isPrimary
+                        ? accent.withOpacity(0.45)
+                        : Colors.black.withOpacity(0.10),
+                    blurRadius: 24,
+                    offset: const Offset(0, 10),
+                    spreadRadius: widget.isPrimary ? 1 : 0,
+                  ),
+                  BoxShadow(
+                    color: Colors.white.withOpacity(0.55),
+                    blurRadius: 1,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Stack(
+                children: [
+                  // 内容
+                  Center(
+                    child: DefaultTextStyle.merge(
+                      style: TextStyle(
+                        color: widget.isPrimary
+                            ? Colors.white
+                            : const Color(0xFF4E5875),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.3,
+                      ),
+                      child: IconTheme.merge(
+                        data: IconThemeData(
                           color: widget.isPrimary
                               ? Colors.white
-                              : const Color(0xFF4E5875),
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.3,
+                              : const Color(0xFF5F6A85),
                         ),
-                        child: IconTheme.merge(
-                          data: IconThemeData(
-                            color: widget.isPrimary
-                                ? Colors.white
-                                : const Color(0xFF5F6A85),
-                          ),
-                          child: widget.child,
-                        ),
+                        child: widget.child,
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
         ),
+      ),
     );
   }
 }
@@ -345,79 +348,79 @@ class _LiquidGlassCircleButtonState extends State<LiquidGlassCircleButton>
                 child: Container(
                   width: widget.size,
                   height: widget.size,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: widget.isActive
-                          ? LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                Color.alphaBlend(
-                                    Colors.white.withOpacity(0.3), accent),
-                                accent,
-                              ],
-                            )
-                          : LinearGradient(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: widget.isActive
+                        ? LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Color.alphaBlend(
+                                  Colors.white.withOpacity(0.3), accent),
+                              accent,
+                            ],
+                          )
+                        : LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.white.withOpacity(0.75),
+                              Colors.white.withOpacity(0.45),
+                            ],
+                          ),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(0.6),
+                      width: 1.2,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: widget.isActive
+                            ? accent.withOpacity(0.4)
+                            : Colors.black.withOpacity(0.08),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // 顶部高光弧
+                      Positioned(
+                        top: 2,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          height: widget.size * 0.35,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
                               colors: [
-                                Colors.white.withOpacity(0.75),
-                                Colors.white.withOpacity(0.45),
+                                Colors.white.withOpacity(0.5),
+                                Colors.white.withOpacity(0),
                               ],
                             ),
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.6),
-                        width: 1.2,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: widget.isActive
-                              ? accent.withOpacity(0.4)
-                              : Colors.black.withOpacity(0.08),
-                          blurRadius: 16,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
-                    ),
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        // 顶部高光弧
-                        Positioned(
-                          top: 2,
-                          left: 0,
-                          right: 0,
-                          child: Container(
-                            height: widget.size * 0.35,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.white.withOpacity(0.5),
-                                  Colors.white.withOpacity(0),
-                                ],
-                              ),
-                              borderRadius: BorderRadius.vertical(
-                                top: Radius.circular(widget.size),
-                              ),
+                            borderRadius: BorderRadius.vertical(
+                              top: Radius.circular(widget.size),
                             ),
                           ),
                         ),
-                        IconTheme.merge(
-                          data: IconThemeData(
-                            color: widget.isActive
-                                ? Colors.white
-                                : const Color(0xFF5F6A85),
-                            size: widget.size * 0.42,
-                          ),
-                          child: widget.child,
+                      ),
+                      IconTheme.merge(
+                        data: IconThemeData(
+                          color: widget.isActive
+                              ? Colors.white
+                              : const Color(0xFF5F6A85),
+                          size: widget.size * 0.42,
                         ),
-                      ],
-                    ),
+                        child: widget.child,
+                      ),
+                    ],
                   ),
                 ),
               ),
+            ),
           ],
         ),
       ),
@@ -434,7 +437,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '瞬译',
+      title: 'lingua link',
       theme: ThemeData(
         scaffoldBackgroundColor: const Color(0xFFF6F6F8),
         colorScheme: ColorScheme.fromSeed(
@@ -505,6 +508,8 @@ class _TranslatePageState extends State<TranslatePage> {
     {'name': '葡萄牙语', 'code': 'pt'},
     {'name': '阿拉伯语', 'code': 'ar'},
     {'name': '印地语', 'code': 'hi'},
+    {'name': '土耳其语', 'code': 'tr'},
+    {'name': '荷兰语', 'code': 'nl'},
   ];
 
   // TTS 语言代码映射
@@ -521,6 +526,8 @@ class _TranslatePageState extends State<TranslatePage> {
     'pt': 'pt-PT',
     'ar': 'ar-SA',
     'hi': 'hi-IN',
+    'tr': 'tr-TR',
+    'nl': 'nl-NL',
   };
 
   // 语音识别 locale 映射
@@ -537,6 +544,8 @@ class _TranslatePageState extends State<TranslatePage> {
     'pt': 'pt_PT',
     'ar': 'ar_SA',
     'hi': 'hi_IN',
+    'tr': 'tr_TR',
+    'nl': 'nl_NL',
   };
 
   int _fromIndex = 0;
@@ -857,30 +866,30 @@ class _TranslatePageState extends State<TranslatePage> {
             ),
           ],
         ),
-          child: Stack(
-            children: [
-              // 顶部玻璃反光弧
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: Container(
-                  height: 1.5,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        Colors.white.withOpacity(0),
-                        Colors.white.withOpacity(0.95),
-                        Colors.white.withOpacity(0),
-                      ],
-                    ),
+        child: Stack(
+          children: [
+            // 顶部玻璃反光弧
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                height: 1.5,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.white.withOpacity(0),
+                      Colors.white.withOpacity(0.95),
+                      Colors.white.withOpacity(0),
+                    ],
                   ),
                 ),
               ),
-              child,
-            ],
-          ),
+            ),
+            child,
+          ],
         ),
+      ),
     );
   }
 
@@ -914,65 +923,65 @@ class _TranslatePageState extends State<TranslatePage> {
             ),
           ],
         ),
-          child: Stack(
-            children: [
-              // 顶部高光弧
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: Container(
-                  height: 1,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        Colors.white.withOpacity(0),
-                        Colors.white.withOpacity(0.9),
-                        Colors.white.withOpacity(0),
-                      ],
-                    ),
+        child: Stack(
+          children: [
+            // 顶部高光弧
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                height: 1,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.white.withOpacity(0),
+                      Colors.white.withOpacity(0.9),
+                      Colors.white.withOpacity(0),
+                    ],
                   ),
                 ),
               ),
-              DropdownButtonFormField<int>(
-                value: value,
-                items: _langList.asMap().entries.map((entry) {
-                  return DropdownMenuItem<int>(
-                    value: entry.key,
-                    child: Text(
-                      entry.value['name']!,
-                      style: const TextStyle(
-                        color: Color(0xFF232F46),
-                        fontWeight: FontWeight.w500,
-                      ),
+            ),
+            DropdownButtonFormField<int>(
+              value: value,
+              items: _langList.asMap().entries.map((entry) {
+                return DropdownMenuItem<int>(
+                  value: entry.key,
+                  child: Text(
+                    entry.value['name']!,
+                    style: const TextStyle(
+                      color: Color(0xFF232F46),
+                      fontWeight: FontWeight.w500,
                     ),
-                  );
-                }).toList(),
-                onChanged: onChanged,
-                isExpanded: true,
-                icon: const Icon(
-                  Icons.keyboard_arrow_down_rounded,
-                  color: Color(0xFF5D6CFF),
-                ),
-                decoration: InputDecoration(
-                  labelText: label,
-                  labelStyle: const TextStyle(
-                    color: Color(0xFF5F6A85),
-                    fontWeight: FontWeight.w500,
                   ),
-                  filled: false,
-                  contentPadding: const EdgeInsets.symmetric(
-                    vertical: 14,
-                    horizontal: 14,
-                  ),
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                ),
+                );
+              }).toList(),
+              onChanged: onChanged,
+              isExpanded: true,
+              icon: const Icon(
+                Icons.keyboard_arrow_down_rounded,
+                color: Color(0xFF5D6CFF),
               ),
-            ],
-          ),
+              decoration: InputDecoration(
+                labelText: label,
+                labelStyle: const TextStyle(
+                  color: Color(0xFF5F6A85),
+                  fontWeight: FontWeight.w500,
+                ),
+                filled: false,
+                contentPadding: const EdgeInsets.symmetric(
+                  vertical: 14,
+                  horizontal: 14,
+                ),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+              ),
+            ),
+          ],
         ),
+      ),
     );
   }
 
@@ -1187,17 +1196,21 @@ class _TranslatePageState extends State<TranslatePage> {
             Row(
               children: [
                 const Text('AI 润色',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
                     color: const Color(0xFFFFB300),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Text('PRO',
                       style: TextStyle(
-                          color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold)),
                 ),
               ],
             ),
