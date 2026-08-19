@@ -1185,7 +1185,7 @@ class _TranslatePageState extends State<TranslatePage> {
         }
       }
       if (docFile == null) return '';
-      final xml = String.fromCharCodes(docFile.content as List<int>);
+      final xml = utf8.decode(docFile.content as List<int>);
       final withBreaks = xml.replaceAll(RegExp(r'</w:p>'), '\n');
       final matches = RegExp(r'<w:t[^>]*>(.*?)</w:t>', dotAll: true).allMatches(withBreaks);
       final sb = StringBuffer();
