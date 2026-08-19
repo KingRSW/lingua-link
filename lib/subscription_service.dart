@@ -154,7 +154,7 @@ extension ProFeatureMeta on ProFeature {
   String get desc {
     switch (this) {
       case ProFeature.document:
-        return '上传 PDF/Word/TXT 整篇翻译';
+        return '上传 TXT/MD/CSV/DOCX 整篇翻译';
       case ProFeature.export:
         return '结果导出 PDF/Word/Markdown 或一键分享';
       case ProFeature.glossary:

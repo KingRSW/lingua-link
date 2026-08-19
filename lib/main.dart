@@ -30,10 +30,14 @@ import 'package:http/http.dart' as http;
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:typed_data';
 import 'subscription_service.dart';
 import 'paywall.dart';
 import 'redeem_screen.dart';
 import 'payment/payment_provider.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:archive/archive.dart';
 
 void main() {
   // 把 Dart 异常显示到屏幕上,方便排查 iOS 27 上的白屏(而不是静默白屏)
@@ -967,34 +971,293 @@ class _TranslatePageState extends State<TranslatePage> {
     }
   }
 
-  /// 文档翻译（PRO，开发中）。
-  void _openDocument() {
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  /// 文档翻译（PRO）：选 TXT/MD/CSV/DOCX → 提取文本 → 分块翻译 → 结果可复制。
+  Future<void> _openDocument() async {
+    if (!mounted) return;
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['txt', 'md', 'csv', 'docx'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.single;
+    final bytes = file.bytes;
+    if (bytes == null) {
+      _showSnack('无法读取文件内容');
+      return;
+    }
+    final name = file.name.toLowerCase();
+    final text = name.endsWith('.docx')
+        ? _extractDocxText(bytes)
+        : utf8.decode(bytes, allowMalformed: true);
+    if (text.trim().isEmpty) {
+      _showSnack('未提取到文本（PDF 暂不支持，请先转成 TXT/DOCX）');
+      return;
+    }
+    final from = _langList[_fromIndex]['code']!;
+    final to = _langList[_toIndex]['code']!;
+    final progress = ValueNotifier<String>('准备中…');
+    unawaited(showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (c) => AlertDialog(
+        title: const Text('文档翻译'),
+        content: ValueListenableBuilder<String>(
+          valueListenable: progress,
+          builder: (_, v, __) => Row(
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(width: 12),
+              Expanded(child: Text(v)),
+            ],
+          ),
+        ),
+      ),
+    ));
+    try {
+      final out = await _translateDocument(text, from, to, (d, t) {
+        progress.value = '翻译中 $d/$t';
+      });
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      progress.dispose();
+      _showDocumentResult(out);
+    } catch (e) {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      progress.dispose();
+      _showSnack('翻译失败：$e');
+    }
+  }
+
+  /// 文档翻译结果展示（可复制译文）。
+  void _showDocumentResult(String translated) {
     if (!mounted) return;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('文档翻译（PRO）'),
-        content: const Text('即将支持：上传 PDF/Word/TXT 整篇翻译。需接入 file_picker，开发中。'),
+        title: const Text('文档翻译结果'),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 360,
+          child: SingleChildScrollView(child: SelectableText(translated)),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('知道了')),
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: translated));
+              Navigator.pop(ctx);
+              _showSnack('译文已复制');
+            },
+            child: const Text('复制译文'),
+          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
         ],
       ),
     );
   }
 
-  /// 拍照翻译（PRO，开发中）。
-  void _openOcr() {
+  /// 拍照 / 选图 OCR 翻译（PRO）：选图 → 后端视觉 LLM 识别并翻译。
+  Future<void> _openOcr() async {
+    if (!mounted) return;
+    final source = await showDialog<ImageSource?>(
+      context: context,
+      builder: (c) => SimpleDialog(
+        title: const Text('拍照翻译'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(c, ImageSource.camera),
+            child: const ListTile(leading: Icon(Icons.camera_alt), title: Text('拍照')),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(c, ImageSource.gallery),
+            child: const ListTile(leading: Icon(Icons.photo_library), title: Text('从相册选择')),
+          ),
+        ],
+      ),
+    );
+    if (source == null) return;
+    final picker = ImagePicker();
+    final img = await picker.pickImage(source: source, imageQuality: 85);
+    if (img == null) return;
+    final bytes = await img.readAsBytes();
+    final mime = img.mimeType ?? 'image/png';
+    final dataUrl = 'data:$mime;base64,${base64Encode(bytes)}';
+    final backend = kPaymentBackendBaseUrl;
+    if (backend.isEmpty) {
+      _showSnack('OCR 需部署后端（配置 PAYMENT_BACKEND，并接入支持视觉的 LLM）');
+      return;
+    }
+    final progress = ValueNotifier<String>('识别中…');
+    unawaited(showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (c) => AlertDialog(
+        title: const Text('拍照翻译'),
+        content: ValueListenableBuilder<String>(
+          valueListenable: progress,
+          builder: (_, v, __) => Row(
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(width: 12),
+              Expanded(child: Text(v)),
+            ],
+          ),
+        ),
+      ),
+    ));
+    final to = _langList[_toIndex]['code']!;
+    try {
+      final resp = await http
+          .post(
+            Uri.parse('$backend/ocr'),
+            headers: {'content-type': 'application/json'},
+            body: json.encode({'image': dataUrl, 'to': to}),
+          )
+          .timeout(const Duration(seconds: 45));
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      progress.dispose();
+      if (resp.statusCode != 200) {
+        _showSnack('OCR 失败（HTTP ${resp.statusCode}）');
+        return;
+      }
+      final data = json.decode(utf8.decode(resp.bodyBytes));
+      _showOcrResult(data['source']?.toString() ?? '', data['target']?.toString() ?? '');
+    } catch (e) {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      progress.dispose();
+      _showSnack('OCR 失败：$e');
+    }
+  }
+
+  /// OCR 结果展示（原文 + 译文，可复制译文）。
+  void _showOcrResult(String source, String target) {
     if (!mounted) return;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('拍照翻译（PRO）'),
-        content: const Text('即将支持：拍照/选图 OCR 翻译。需接入 image_picker + OCR，开发中。'),
+        title: const Text('拍照翻译结果'),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 360,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('识别原文', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                SelectableText(source.isEmpty ? '（未识别到文字）' : source),
+                const SizedBox(height: 16),
+                const Text('译文', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                SelectableText(target.isEmpty ? '（无）' : target),
+              ],
+            ),
+          ),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('知道了')),
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: target));
+              Navigator.pop(ctx);
+              _showSnack('译文已复制');
+            },
+            child: const Text('复制译文'),
+          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
         ],
       ),
     );
+  }
+
+  /// 从 DOCX 字节提取纯文本（解析 word/document.xml 中的 <w:t>）。
+  String _extractDocxText(Uint8List bytes) {
+    try {
+      final archive = ZipDecoder().decodeBytes(bytes);
+      ArchiveFile? docFile;
+      for (final f in archive.files) {
+        if (f.name == 'word/document.xml') {
+          docFile = f;
+          break;
+        }
+      }
+      if (docFile == null) return '';
+      final xml = String.fromCharCodes(docFile.content as List<int>);
+      final withBreaks = xml.replaceAll(RegExp(r'</w:p>'), '\n');
+      final matches = RegExp(r'<w:t[^>]*>(.*?)</w:t>', dotAll: true).allMatches(withBreaks);
+      final sb = StringBuffer();
+      for (final m in matches) {
+        sb.write(_xmlUnescape(m.group(1) ?? ''));
+      }
+      return sb.toString().trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  String _xmlUnescape(String s) => s
+      .replaceAll('&amp;', '&')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&apos;', "'")
+      .replaceAll('&nbsp;', ' ');
+
+  /// 把长文本切成 ~400 字符的块（尽量按段落边界）。
+  List<String> _chunkText(String text) {
+    final paras = text.split('\n');
+    final chunks = <String>[];
+    final buf = StringBuffer();
+    for (final p in paras) {
+      final piece = p.trim();
+      if (piece.isEmpty) continue;
+      if (buf.isNotEmpty && buf.length + piece.length > 400) {
+        chunks.add(buf.toString().trim());
+        buf.clear();
+      }
+      buf.write(piece);
+      buf.write('\n');
+    }
+    if (buf.isNotEmpty) chunks.add(buf.toString().trim());
+    return chunks;
+  }
+
+  /// 整篇文档分块翻译（MyMemory，免费、无需密钥）。
+  Future<String> _translateDocument(String text, String from, String to,
+      void Function(int done, int total) onProgress) async {
+    final chunks = _chunkText(text);
+    if (chunks.isEmpty) return '';
+    final sb = StringBuffer();
+    for (var i = 0; i < chunks.length; i++) {
+      onProgress(i + 1, chunks.length);
+      final t = await _translateViaMymemory(chunks[i], from, to);
+      sb.write(t);
+      sb.write('\n\n');
+    }
+    return sb.toString().trim();
+  }
+
+  /// 单段走 MyMemory 翻译（文档 / 语音复用）。
+  Future<String> _translateViaMymemory(String text, String from, String to) async {
+    if (text.trim().isEmpty) return '';
+    final uri = Uri.https('api.mymemory.translated.net', '/get', {
+      'q': text,
+      'langpair': '$from|$to',
+    });
+    try {
+      final resp = await http.get(uri).timeout(const Duration(seconds: 20));
+      if (resp.statusCode != 200) return text;
+      final data = json.decode(utf8.decode(resp.bodyBytes));
+      final rd = data is Map<String, dynamic> ? data['responseData'] : null;
+      final t = rd is Map<String, dynamic> ? rd['translatedText'] as String? : null;
+      if (t == null || t.isEmpty || t.startsWith('MYMEMORY WARNING')) return text;
+      return t;
+    } catch (_) {
+      return text;
+    }
   }
 
   /// 统一的 PRO 工具入口：未开通会员先跳付费墙，否则执行对应功能。

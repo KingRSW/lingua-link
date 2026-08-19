@@ -363,6 +363,94 @@ async function aiPolish(request, env) {
 }
 
 // ============================================================
+// 6) 拍照 / 图片 OCR 翻译（PRO 权益，接支持视觉的 LLM）
+// ============================================================
+function langName(code) {
+  if (!code) return '中文';
+  const c = code.toLowerCase();
+  if (c.startsWith('zh')) return '中文';
+  if (c.startsWith('en')) return '英文';
+  if (c.startsWith('ja')) return '日文';
+  if (c.startsWith('ko')) return '韩文';
+  if (c.startsWith('fr')) return '法文';
+  if (c.startsWith('de')) return '德文';
+  if (c.startsWith('es')) return '西班牙文';
+  if (c.startsWith('ru')) return '俄文';
+  if (c.startsWith('pt')) return '葡萄牙文';
+  if (c.startsWith('it')) return '意大利文';
+  return code;
+}
+
+// 从 LLM 文本里抠出第一个 JSON 对象（兼容 ```json 代码块包装）。
+function extractJson(s) {
+  try {
+    const m = s.match(/\{[\s\S]*\}/);
+    if (m) return JSON.parse(m[0]);
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+async function ocr(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'bad json' }, 400);
+  }
+  const image = body.image;
+  const to = (body.to || 'zh-CN').toString();
+  if (!image || !image.startsWith('data:')) {
+    return json({ error: 'invalid image' }, 400);
+  }
+  const key = env.LLM_API_KEY;
+  if (!key) {
+    // DEV 占位：未配置 LLM 密钥时返回提示，便于前端联调流程。
+    return json({
+      source: '(DEV) 未配置 OCR 后端',
+      target: '(DEV) 部署时配置 LLM_API_KEY 即生效（需支持视觉的模型）',
+    });
+  }
+  const langLabel = langName(to);
+  const sys = `你是一个 OCR 与翻译助手。请识别图片中的文字，并将其翻译成${langLabel}。`
+    + '只输出一个 JSON 对象：{"source": 图片中的原文, "target": 译文}。'
+    + '不要输出任何解释或 Markdown 代码块。若图片中无文字，source 与 target 均为空字符串。';
+  try {
+    const base = env.LLM_BASE_URL || 'https://api.deepseek.com';
+    const model = env.LLM_MODEL || 'deepseek-chat';
+    const resp = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: sys },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: '识别并翻译这张图片。' },
+              { type: 'image_url', image_url: { url: image } },
+            ],
+          },
+        ],
+        temperature: 0.3,
+        max_tokens: 2000,
+      }),
+    });
+    const data = await resp.json();
+    const content = data?.choices?.[0]?.message?.content?.trim() || '';
+    const parsed = extractJson(content);
+    return json({
+      source: parsed?.source || '',
+      target: parsed?.target || content,
+    });
+  } catch (e) {
+    return json({ error: 'ocr_failed', detail: String(e) }, 502);
+  }
+}
+
+// ============================================================
 // 路由入口
 // ============================================================
 export default {
@@ -375,6 +463,7 @@ export default {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
     if (p === '/ai-polish' && request.method === 'POST') return aiPolish(request, env);
+    if (p === '/ocr' && request.method === 'POST') return ocr(request, env);
     if (p === '/create-order' && request.method === 'POST') return createOrder(request, env);
     if (p === '/pay' && request.method === 'GET')
       return payPage(url.searchParams.get('orderId'), channel, env);
