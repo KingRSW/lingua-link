@@ -311,6 +311,15 @@ function entitlement(orderId) {
 // ============================================================
 // 5) AI 润色（PRO 权益，接便宜 LLM）
 // ============================================================
+
+// OpenAI 兼容聊天补全端点。LLM_BASE_URL 填「拼接 /chat/completions 后正好命中」的基址：
+//   DeepSeek: https://api.deepseek.com/v1
+//   Zhipu GLM: https://open.bigmodel.cn/api/paas/v4
+function llmChatUrl(env) {
+  const base = (env.LLM_BASE_URL || 'https://api.deepseek.com/v1').replace(/\/+$/, '');
+  return `${base}/chat/completions`;
+}
+
 const SCENE_PROMPTS = {
   natural: '把下面这段翻译润色得更地道、自然、符合母语表达习惯，不要改变原意。只输出润色后的文本本身。',
   business: '把下面这段翻译润色得更商务、专业、得体，适合工作沟通。只输出润色后的文本本身。',
@@ -338,9 +347,8 @@ async function aiPolish(request, env) {
     return json({ polished: text + '（DEV 模拟润色：配置 LLM_API_KEY 后生效）' });
   }
   try {
-    const base = env.LLM_BASE_URL || 'https://api.deepseek.com';
     const model = env.LLM_MODEL || 'deepseek-chat';
-    const resp = await fetch(`${base}/v1/chat/completions`, {
+    const resp = await fetch(llmChatUrl(env), {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
       body: JSON.stringify({
@@ -417,9 +425,8 @@ async function ocr(request, env) {
     + '只输出一个 JSON 对象：{"source": 图片中的原文, "target": 译文}。'
     + '不要输出任何解释或 Markdown 代码块。若图片中无文字，source 与 target 均为空字符串。';
   try {
-    const base = env.LLM_BASE_URL || 'https://api.deepseek.com';
     const model = env.LLM_MODEL || 'deepseek-chat';
-    const resp = await fetch(`${base}/v1/chat/completions`, {
+    const resp = await fetch(llmChatUrl(env), {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
       body: JSON.stringify({
