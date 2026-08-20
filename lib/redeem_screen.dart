@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'subscription_service.dart';
 
 /// 独立的「兑换码」页面：用户可随时从主界面顶部进入，输入解锁码解锁高级功能。
-/// 校验逻辑全部复用 SubscriptionService.redeemCode（与发卡脚本 tools/gen_code.dart 同算法）。
+/// 兑换逻辑走 SubscriptionService.redeemCode（请求后端 /redeem，服务端用 REDEEM_SECRET 校验签名）。
 class RedeemScreen extends StatefulWidget {
   const RedeemScreen({super.key});
 
@@ -24,7 +24,7 @@ class _RedeemScreenState extends State<RedeemScreen> {
     });
     // 轻微延时，让 loading 态可见（也避免误以为没反应）
     await Future.delayed(const Duration(milliseconds: 200));
-    final ok = SubscriptionService.instance.redeemCode(_codeCtrl.text);
+    final ok = await SubscriptionService.instance.redeemCode(_codeCtrl.text);
     if (!mounted) return;
     setState(() {
       _busy = false;

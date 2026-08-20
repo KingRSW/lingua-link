@@ -89,7 +89,7 @@ function aliSignContent(params) {
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-  'Access-Control-Allow-Headers': 'content-type',
+  'Access-Control-Allow-Headers': 'content-type, authorization, x-membership-token',
 };
 
 function json(data, status = 200) {
@@ -107,6 +107,161 @@ function expireAtFor(planId) {
   const p = PLANS[planId];
   if (!p || p.days == null) return null;
   return new Date(Date.now() + p.days * 86400 * 1000).toISOString();
+}
+
+// ============================================================
+// 会员凭证与兑换码（防白嫖）
+// ============================================================
+// 设计：
+//  - 兑换码在服务端用 REDEEM_SECRET 做 HMAC 签名，客户端无法自行伪造（旧版
+//    纯前端校验和算法可被逆向，已废弃）。发行脚本见 tools/gen_redeem.mjs。
+//  - 兑换成功后服务端签发 HS256 membership token（含 sub/exp），前端随
+//    /ai-polish、/ocr 请求带上；后端校验签名+有效期，否则返回 401。
+//  - 限频：按 token(sub) 内存滑动窗口（免费层够用；多实例生产请改 KV）。
+//  - 未配置密钥时回落 DEV 默认值（仅本地/演示，上线务必设 wrangler secret）。
+
+const DEV_REDEEM_SECRET = 'lingua-dev-redeem-2026';
+const DEV_TOKEN_SECRET = 'lingua-dev-token-2026';
+const RATE_LIMIT = 30; // 每个滑动窗口允许的最大请求数
+const RATE_WINDOW = 60; // 滑动窗口长度（秒）
+
+const rateBuckets = new Map(); // key: 'rate:<sub>' -> { window, count }
+
+function b64urlEncode(str) {
+  return btoa(unescape(encodeURIComponent(str)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function b64urlEncodeBytes(buf) {
+  let s = '';
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function b64urlDecode(str) {
+  str = str.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(str);
+  return decodeURIComponent(escape(bin));
+}
+async function hmacSign(message, key) {
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+  );
+  return crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(message));
+}
+// RFC4648 Base32（与发行脚本 tools/gen_redeem.mjs 一致）
+function base32(buf) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const bytes = new Uint8Array(buf);
+  let bits = 0, value = 0, out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i];
+    bits += 8;
+    while (bits >= 5) {
+      out += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += alphabet[(value << (5 - bits)) & 31];
+  return out;
+}
+
+// 兑换码末段 = HMAC-SHA256("LINGUA-<MIDDLE>", REDEEM_SECRET) 的 base32 前 6 位
+async function redeemSig(middle, secret) {
+  const sig = await hmacSign('LINGUA-' + middle, secret);
+  return base32(sig).slice(0, 6);
+}
+
+function tokenTtlSec(env) {
+  const d = parseInt(env.TOKEN_TTL_DAYS || '30', 10);
+  return (isNaN(d) ? 30 : d) * 86400;
+}
+
+async function signToken(sub, env) {
+  const secret = env.TOKEN_SECRET || DEV_TOKEN_SECRET;
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const now = Math.floor(Date.now() / 1000);
+  const payload = { sub, iat: now, exp: now + tokenTtlSec(env) };
+  const h = b64urlEncode(JSON.stringify(header));
+  const p = b64urlEncode(JSON.stringify(payload));
+  const sig = await hmacSign(`${h}.${p}`, secret);
+  return `${h}.${p}.${b64urlEncodeBytes(sig)}`;
+}
+
+async function verifyToken(token, env) {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const secret = env.TOKEN_SECRET || DEV_TOKEN_SECRET;
+  const sig = await hmacSign(`${parts[0]}.${parts[1]}`, secret);
+  const expect = b64urlEncodeBytes(sig);
+  if (expect.length !== parts[2].length) return null;
+  let ok = 1;
+  for (let i = 0; i < expect.length; i++) {
+    ok &= (expect.charCodeAt(i) === parts[2].charCodeAt(i) ? 1 : 0);
+  }
+  if (!ok) return null;
+  try {
+    const payload = JSON.parse(b64urlDecode(parts[1]));
+    if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function bearerToken(request) {
+  const auth = request.headers.get('authorization') || '';
+  if (auth.toLowerCase().startsWith('bearer ')) return auth.slice(7).trim();
+  return request.headers.get('x-membership-token') || '';
+}
+
+function rateLimited(key) {
+  const now = Math.floor(Date.now() / 1000);
+  const b = rateBuckets.get(key);
+  if (!b || now - b.window >= RATE_WINDOW) {
+    rateBuckets.set(key, { window: now, count: 1 });
+    return false;
+  }
+  b.count += 1;
+  return b.count > RATE_LIMIT;
+}
+
+// PRO 权益接口前置校验：校验会员 token + 限频。返回 null 表示通过，否则是错误响应。
+async function requireMember(request, env) {
+  const payload = await verifyToken(bearerToken(request), env);
+  if (!payload) {
+    return json({ error: 'unauthorized', code: 'no_membership',
+      message: '需要有效的会员凭证（请先在 App 内用兑换码解锁）' }, 401);
+  }
+  if (rateLimited('rate:' + (payload.sub || 'anon'))) {
+    return json({ error: 'rate_limited', message: '请求过于频繁，请稍后再试' }, 429);
+  }
+  return null;
+}
+
+// /redeem：校验兑换码，成功则签发 membership token
+async function redeem(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400); }
+  const code = ((body.code || '') + '').trim().toUpperCase();
+  const parts = code.split('-');
+  if (parts.length !== 3 || parts[0] !== 'LINGUA') return json({ error: 'invalid_code' }, 400);
+  const middle = parts[1], given = parts[2];
+  if (!/^[0-9A-Z]{6}$/.test(middle) || !/^[0-9A-Z]{6}$/.test(given)) {
+    return json({ error: 'invalid_code' }, 400);
+  }
+  const secret = env.REDEEM_SECRET || DEV_REDEEM_SECRET;
+  if ((await redeemSig(middle, secret)) !== given) {
+    return json({ error: 'invalid_code', message: '兑换码无效或已被伪造' }, 400);
+  }
+  const token = await signToken(middle, env);
+  return json({
+    ok: true,
+    token,
+    isPremium: true,
+    source: 'redeem',
+    expireAt: new Date(Date.now() + tokenTtlSec(env) * 1000).toISOString(),
+  });
 }
 
 // ============================================================
@@ -338,8 +493,7 @@ async function aiPolish(request, env) {
   const scene = SCENE_PROMPTS[body.scene] ? body.scene : 'natural';
   if (!text) return json({ error: 'empty text' }, 400);
 
-  // TODO(生产): 防盗刷/防绕过——AI 润色是付费权益，应在请求带会员 token 并在此处校验
-  // （当前权益仅存前端，后端未记录，故先做演示级开放；上线前务必加权益校验+限频）。
+  // 会员校验与限频已在路由层 requireMember 完成（/ai-polish 必须带有效 membership token）。
 
   const key = env.LLM_API_KEY;
   if (!key) {
@@ -469,8 +623,17 @@ export default {
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
-    if (p === '/ai-polish' && request.method === 'POST') return aiPolish(request, env);
-    if (p === '/ocr' && request.method === 'POST') return ocr(request, env);
+    if (p === '/ai-polish' && request.method === 'POST') {
+      const denied = await requireMember(request, env);
+      if (denied) return denied;
+      return aiPolish(request, env);
+    }
+    if (p === '/ocr' && request.method === 'POST') {
+      const denied = await requireMember(request, env);
+      if (denied) return denied;
+      return ocr(request, env);
+    }
+    if (p === '/redeem' && request.method === 'POST') return redeem(request, env);
     if (p === '/create-order' && request.method === 'POST') return createOrder(request, env);
     if (p === '/pay' && request.method === 'GET')
       return payPage(url.searchParams.get('orderId'), channel, env);

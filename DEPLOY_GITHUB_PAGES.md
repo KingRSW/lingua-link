@@ -82,15 +82,18 @@ python3 -m http.server 8080
 3. （生产建议）删掉 `PaywallScreen` 里的「（测试）临时解锁」按钮和 `SubscriptionService.toggleDevUnlock()`，避免被随意解锁。
 
 ### 给赞助者发卡
-本机终端运行（生成 3 个解锁码，每人发一个）：
+本机终端运行（需与后端 `REDEEM_SECRET` 一致；本地默认密钥见 `.dev.vars`）：
 ```zsh
 cd "/Users/kingrsw/lingua link"
-flutter pub get
-dart run tools/gen_code.dart
+node tools/gen_redeem.mjs KINGRS          # 用默认 REDEEM_SECRET，输出 LINGUA-KINGRS-XXXXXX
+node tools/gen_redeem.mjs KINGRS "你的-REDEEM_SECRET"   # 生产请传你自己的密钥
 ```
 赞助者拿到码后，在网页里点右上角皇冠 → 输入解锁码 → 即解锁高级功能。
 
 ### 校验原理（透明说明）
-解锁码格式 `LINGUA-XXXXXX-XXXXXX`，末段是前段的校验和，由 `subscription_service.dart` 与 `tools/gen_code.dart` 共用同一算法。
-纯前端校验**可被技术用户绕过**，对个人小工具足够；若要「不可绕过」，可加一个 serverless 校验（如 Cloudflare Workers，免费额度足够），把 `redeemCode` 改成请求你的函数即可。
+解锁码格式 `LINGUA-XXXXXX-XXXXXX`：
+- 末段 `XXXXXX` = HMAC-SHA256(`LINGUA-<前段>`, **服务端 `REDEEM_SECRET`**) 的 Base32 前 6 位。
+- 校验在服务端 `worker.js` 的 `/redeem` 完成，客户端**无法自行伪造**（旧版纯前端校验和已被废弃）。
+- 兑换成功后服务端签发 HS256 membership token，App 调用 `/ai-polish`、`/ocr` 时带上；后端校验签名 + 有效期 + 限频，未带有效 token 直接 `401`（防白嫖）。
+- 密钥只在后端（`.dev.vars` / `wrangler secret`），前端永不接触。生产务必用你自己的 `REDEEM_SECRET` / `TOKEN_SECRET`。
 

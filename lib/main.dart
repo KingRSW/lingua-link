@@ -1114,12 +1114,18 @@ class _TranslatePageState extends State<TranslatePage> {
       final resp = await http
           .post(
             Uri.parse('$backend/ocr'),
-            headers: {'content-type': 'application/json'},
+            headers: SubscriptionService.instance.apiAuthHeaders,
             body: json.encode({'image': dataUrl, 'to': to}),
           )
           .timeout(const Duration(seconds: 45));
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
       progress.dispose();
+      if (resp.statusCode == 401) {
+        await SubscriptionService.instance.clearMembership();
+        if (mounted) setState(() {});
+        _showSnack('会员凭证已失效，请重新在「兑换码」页兑换');
+        return;
+      }
       if (resp.statusCode != 200) {
         _showSnack('OCR 失败（HTTP ${resp.statusCode}）');
         return;
@@ -1318,12 +1324,17 @@ class _TranslatePageState extends State<TranslatePage> {
       final resp = await http
           .post(
             Uri.parse('$backend/ai-polish'),
-            headers: {'content-type': 'application/json'},
+            headers: SubscriptionService.instance.apiAuthHeaders,
             body: json.encode({'text': _resultText, 'scene': _polishScene}),
           )
           .timeout(const Duration(seconds: 30));
       final data = json.decode(utf8.decode(resp.bodyBytes));
       if (!mounted) return;
+      if (resp.statusCode == 401) {
+        await SubscriptionService.instance.clearMembership();
+        if (mounted) setState(() {});
+        throw Exception('会员凭证已失效，请重新在「兑换码」页兑换');
+      }
       if (resp.statusCode != 200 || data['polished'] == null) {
         throw Exception(data['error'] ?? '润色失败');
       }

@@ -46,7 +46,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
       _msg = null;
     });
     await Future.delayed(const Duration(milliseconds: 200));
-    final ok = SubscriptionService.instance.redeemCode(_codeCtrl.text);
+    final ok = await SubscriptionService.instance.redeemCode(_codeCtrl.text);
     setState(() {
       _busy = false;
       _msg = ok ? '✅ 已解锁高级功能！' : '❌ 解锁码无效，请检查后重试';

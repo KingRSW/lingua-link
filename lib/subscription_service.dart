@@ -3,17 +3,19 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
 
 import 'payment/models.dart';
+import 'payment/payment_provider.dart';
 
 /// 会员权益服务：前端唯一的「高级功能」状态入口。
 ///
 /// 设计：
-/// - 权益（Entitlement）本地只做缓存，真正真源是后端 worker.js；
-///   付费购买成功后由支付层把后端签发的 Entitlement 写入这里。
-/// - 兑换码（redeemCode）仍是纯本地校验，适合开发者分发 / 灰度 / 补偿，不依赖后端。
-/// - 纯前端校验可被技术用户绕过；若要「不可绕过」，付费权益以后端为准即可
-///   （兑换码场景对独立小工具足够，详见 PAYMENT_SETUP.md）。
+/// - 权益（Entitlement）本地只做缓存，真正真源是后端 worker.js。
+/// - 兑换码（redeemCode）现在走后端 /redeem：服务端用 REDEEM_SECRET 校验签名，
+///   成功则签发 membership token（HS256）并本地缓存。客户端不再自算校验和（旧算法可被逆向伪造）。
+/// - 调用 PRO 权益接口（/ai-polish、/ocr）时，由 apiAuthHeaders 带上该 token，
+///   后端校验签名+有效期+限频，未带有效 token 直接 401（防白嫖）。
 class SubscriptionService {
   SubscriptionService._();
   static final SubscriptionService instance = SubscriptionService._();
@@ -51,6 +53,7 @@ class SubscriptionService {
             ? null
             : DateTime.parse(map['expireAt'] as String),
         source: map['source'] as String?,
+        token: map['token'] as String?,
       );
     } catch (_) {
       _entitlement = const Entitlement(isPremium: false);
@@ -67,62 +70,59 @@ class SubscriptionService {
           'isPremium': e.isPremium,
           'expireAt': e.expireAt?.toIso8601String(),
           'source': e.source,
+          'token': e.token,
         }),
       );
     } catch (_) {}
   }
 
-  /// 兑换码解锁（本地校验，详情见 _checksum）。
-  /// 返回是否成功；成功后写入本地 entitlement（source = 'redeem'）。
-  bool redeemCode(String raw) {
-    final code = raw.trim().toUpperCase();
-    final parts = code.split('-');
-    if (parts.length != 3) return false;
-    if (parts[0] != 'LINGUA') return false;
-    final middle = parts[1];
-    final given = parts[2];
-    if (middle.length != 6 || given.length != 6) return false;
-    if (!RegExp(r'^[0-9A-Z]{12}$').hasMatch(middle + given)) return false;
-    if (_checksum(middle) != given) return false;
-    unawaited(
-      _persist(const Entitlement(isPremium: true, source: 'redeem')),
-    );
-    return true;
+  /// 后端签发的 membership token（HS256）；调用 /ai-polish、/ocr 时由 apiAuthHeaders 带上。
+  String? get membershipToken => _entitlement.token;
+
+  /// 调用 PRO 权益接口时的请求头（含 membership token）。
+  Map<String, String> get apiAuthHeaders => {
+        'content-type': 'application/json',
+        if (_entitlement.token != null) 'authorization': 'Bearer ${_entitlement.token}',
+      };
+
+  /// 兑换码解锁：请求后端 /redeem，由服务端校验签名并签发 membership token。
+  /// 返回是否成功；成功后写入本地 entitlement（带 token，source = 'redeem'）。
+  /// 注意：未配置后端（kPaymentBackendBaseUrl 为空）时无法兑换，直接返回 false。
+  Future<bool> redeemCode(String raw) async {
+    final backend = kPaymentBackendBaseUrl;
+    if (backend.isEmpty) return false;
+    try {
+      final resp = await http
+          .post(
+            Uri.parse('$backend/redeem'),
+            headers: {'content-type': 'application/json'},
+            body: jsonEncode({'code': raw.trim()}),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (resp.statusCode != 200) return false;
+      final data = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+      final token = data['token'] as String?;
+      if (token == null) return false;
+      await _persist(Entitlement(
+        isPremium: true,
+        source: 'redeem',
+        token: token,
+        expireAt: data['expireAt'] == null
+            ? null
+            : DateTime.parse(data['expireAt'] as String),
+      ));
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// 付费购买成功后由支付层调用，写入后端签发的权益（source = 'purchase'）。
   Future<void> activatePurchase(Entitlement e) => _persist(e);
 
-  // --- 校验和（务必与 tools/gen_code.dart 保持一致）---
-  // 关键：用 _mul32 拆 16-bit 半段做 32-bit 乘法，避免 dart2js 编译到 JS 时
-  // 把 (h * p) 算成 IEEE-754 双精度（h≈2^32, p≈2^24 时乘积超 2^53 丢精度），
-  // 导致 Web 端校验和与 Dart VM 端（Dart int=64-bit）算出来的不一致。
-  static const String _salt = 'LinguaLink-2026-StaticSite';
-  static int _mul32(int h, int p) {
-    final lo = (h & 0xFFFF) * p; // < 2^40，53-bit 双精度内安全
-    final hi = ((h >> 16) & 0xFFFF) * p;
-    return (lo + ((hi & 0xFFFF) << 16)) & 0xFFFFFFFF;
-  }
-
-  static String _checksum(String seed) {
-    int h = 0x811c9dc5; // FNV offset basis
-    final s = seed + _salt;
-    for (int i = 0; i < s.length; i++) {
-      h ^= s.codeUnitAt(i);
-      h = _mul32(h, 16777619); // FNV-1a 32-bit（JS-safe）
-    }
-    h = (h ^ (h >> 13)) & 0xFFFFFFFF;
-    h = _mul32(h, 0x5bd1e995); // murmur 混合（JS-safe）
-    h = (h ^ (h >> 15)) & 0xFFFFFFFF;
-    final hex = h.toRadixString(36).toUpperCase().padLeft(7, '0');
-    return hex.substring(0, 6);
-  }
-
-  /// 生成解锁码（与 gen_code.dart 同算法），用于分发解锁高级功能。
-  static String generateCode(String middle) {
-    final m = middle.toUpperCase();
-    return 'LINGUA-$m-${_checksum(m)}';
-  }
+  /// 会员凭证失效（如后端返回 401）：清掉本地权益，回到未解锁状态。
+  Future<void> clearMembership() =>
+      _persist(const Entitlement(isPremium: false));
 }
 
 /// PRO 专属功能/工具。

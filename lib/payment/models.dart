@@ -33,8 +33,11 @@ class Entitlement {
     required this.isPremium,
     this.expireAt,
     this.source,
+    this.token,
   });
   final bool isPremium;
   final DateTime? expireAt;
   final String? source; // 'redeem' | 'purchase'
+  /// 后端签发的 membership token（HS256）。调用 PRO 权益接口（/ai-polish、/ocr）时带上。
+  final String? token;
 }

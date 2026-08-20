@@ -11,9 +11,9 @@
 | --- | --- |
 | `lib/payment/models.dart` | 会员套餐 `Plan`、订单 `Order`、权益 `Entitlement` 数据模型（前后端字段对齐） |
 | `lib/payment/payment_provider.dart` | `PaymentProvider` 抽象 + `WechatAlipayProvider` 实现：下单 → 拉起收银台 → 轮询权益。含 **DEV 模式** |
-| `lib/subscription_service.dart` | 前端唯一的会员状态入口。保留 `redeemCode`（兑换码），新增 `activatePurchase(Entitlement)`（付费权益） |
+| `lib/subscription_service.dart` | 前端唯一的会员状态入口。`redeemCode` 改为请求后端 `/redeem`（服务端用 `REDEEM_SECRET` 校验签名并签发 membership token），新增 `activatePurchase(Entitlement)`（付费权益） |
 | `lib/paywall.dart` | 付费墙 UI：三套餐卡片 + 微信/支付宝按钮 + 兑换码输入区 |
-| `worker.js` | Cloudflare Workers 后端骨架：下单 / 模拟收银台 / 异步通知 / 权益查询 |
+| `worker.js` | Cloudflare Workers 后端：下单 / 模拟收银台 / 异步通知 / 权益查询；新增 `/redeem`（兑换码校验+签 token）与 `/ai-polish`、`/ocr` 的会员 token 门槛 + 限频 |
 
 代码现已能**整链跑通 UI 流程**（DEV 模式，不真实扣款）。要真收钱，按下面补齐账号与配置即可。
 
@@ -26,7 +26,7 @@
 1. 当地「政务服务网 / 市场监管局」线上申请**个体工商户**（经营范围含「信息技术服务 / 软件销售」类即可）。多数地区免费、当天或数日出照。
 2. 拿到营业执照 + 经营者身份证，即可申请下方商户号。
 
-> 备选：若暂时不想办执照，可先用「兑换码」灰度（纯前端已支持）；但**真收钱必须经过商户号**。
+> 备选：若暂时不想办执照，可先用「兑换码」灰度（服务端 `/redeem` 校验，已防伪造）；但**真收钱必须经过商户号**。
 
 ## 二、申请支付商户号
 
