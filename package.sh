@@ -66,15 +66,30 @@ read_meta() {
 build_ipa() {
   info "构建 iOS IPA (no-codesign=$IPA_NO_CODESIGN) ..."
   [ "$OS" = "Darwin" ] || { warn "IPA 只能在 macOS 上构建，已跳过。"; return; }
-  local args=(build ipa --release)
-  [ "$IPA_NO_CODESIGN" = "true" ] && args+=(--no-codesign)
-  flutter "${args[@]}" || die "flutter build ipa 失败"
-  local src
-  src="$(ls build/ios/ipa/*.ipa 2>/dev/null | head -n1)"
-  [ -n "$src" ] || die "没找到 build/ios/ipa/*.ipa"
   mkdir -p "$OUTPUT_DIR"
-  cp "$src" "$OUTPUT_DIR/${APP_NAME}-${VERSION}-ios.ipa"
-  log "IPA -> $OUTPUT_DIR/${APP_NAME}-${VERSION}-ios.ipa"
+  local out="$OUTPUT_DIR/${APP_NAME}-${VERSION}-ios.ipa"
+  if [ "$IPA_NO_CODESIGN" = "true" ]; then
+    # 未签名：先出 Runner.app，再手动打成 IPA（供爱思助手侧载重签）
+    if [ ! -d build/ios/iphoneos/Runner.app ]; then
+      flutter build ios --release --no-codesign || die "flutter build ios --no-codesign 失败"
+    fi
+    local app
+    app="$(ls -d build/ios/iphoneos/*.app 2>/dev/null | head -n1)"
+    [ -n "$app" ] || die "没找到 build/ios/iphoneos/*.app"
+    local tmp; tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Payload"
+    cp -r "$app" "$tmp/Payload/"
+    ( cd "$tmp" && zip -r -q "$PWD/app.ipa" Payload )
+    cp "$tmp/app.ipa" "$out"
+    rm -rf "$tmp"
+  else
+    flutter build ipa --release || die "flutter build ipa 失败"
+    local src
+    src="$(ls build/ios/ipa/*.ipa 2>/dev/null | head -n1)"
+    [ -n "$src" ] || die "没找到 build/ios/ipa/*.ipa"
+    cp "$src" "$out"
+  fi
+  log "IPA -> $out"
 }
 
 build_apk() {
