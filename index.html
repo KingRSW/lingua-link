@@ -172,6 +172,7 @@
       <a href="#how">怎么用</a>
       <a href="#download">下载</a>
       <a href="#aisi">爱思助手</a>
+      <a href="#sign">签名软件</a>
       <a href="#nocomputer">无电脑</a>
     </nav>
     <a class="btn btn-primary btn-sm" href="#download">下载安装包</a>
@@ -737,6 +738,27 @@ fi
 </code></pre></details>
 
           </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SIGN SOFTWARE -->
+  <section id="sign">
+    <div class="wrap">
+      <div class="aisi reveal">
+        <div class="left">
+          <h3>iPhone 端签名软件 · iosxb.cn</h3>
+          <p>iosxb.cn 是一类 <b>iOS 签名 / 证书服务</b>：它卖「企业证书」或「Apple ID 签名额度」，让你<b>免电脑</b>、直接用手机或网页把未签名 IPA 签成可安装的包。适合不想借电脑、又希望装一次长期用的场景。</p>
+          <a class="btn btn-primary" href="https://iosxb.cn" target="_blank" rel="noopener">🔗 前往 iosxb.cn</a>
+        </div>
+        <div class="right">
+          <div class="steps">
+            <div class="step"><span class="n"></span><div><b>选证书 / 签名额度</b><span>在 iosxb.cn 购买企业证书或签名额度，拿到 p12 + 描述文件（或用它的云端签名入口）。</span></div></div>
+            <div class="step"><span class="n"></span><div><b>给 IPA 签名</b><span>用它的工具上传 Lingua Link 的 IPA 完成签名；或本地用仓库里的 <code>sign.sh --p12 … --prov …</code> 自己签。</span></div></div>
+            <div class="step"><span class="n"></span><div><b>安装并信任</b><span>装到手机后，设置 → 通用 → VPN 与设备管理 信任描述文件即可打开。</span></div></div>
+          </div>
+          <div class="note"><b>⚠️ 风险提示：</b>这类<b>共享企业证书</b>有被 Apple <b>整批吊销</b>的风险——一旦吊销，装上的 App 会报 <code>0xe8008018</code> 直接打不开，钱也退不回。我们此前核验过，iosxb.cn 的共享证书曾被批量吊销。建议：<b>优先用你自己的免费 Apple ID 在爱思助手重签</b>（免费、7 天有效、最稳）；若确实要买付费证书，购买前务必确认<b>当前证书仍有效</b>。</div>
         </div>
       </div>
     </div>
