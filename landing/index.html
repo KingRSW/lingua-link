@@ -126,6 +126,11 @@
   pre code{white-space:pre}
   .cli-note{font-size:13px;color:var(--muted);margin-top:11px}
   .cli-note a{color:var(--indigo);font-weight:700}
+  .dl-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+  details.src{margin-top:12px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff}
+  details.src summary{padding:12px 16px;font-weight:700;cursor:pointer;background:#fafbff;user-select:none}
+  details.src summary:hover{color:var(--indigo)}
+  details.src pre{margin:0;border-radius:0}
 
   /* footer */
   footer{border-top:1px solid var(--line);padding:34px 0;color:var(--muted);font-size:14px}
@@ -310,6 +315,360 @@
 # 7 天到期自动检测重签（launchd 每天 9 点触发，满 7 天才动手）
 ./auto_resign.sh</code></pre>
             <p class="cli-note">脚本在仓库 <a href="https://github.com/KingRSW/lingua-link" target="_blank" rel="noopener">GitHub</a> 根目录；免费 Apple ID 签名 7 天有效，到期重签即可。</p>
+<div class="dl-row"><a class="btn btn-ghost btn-sm" href="https://raw.githubusercontent.com/KingRSW/lingua-link/main/sign.sh" target="_blank" rel="noopener">⬇ sign.sh</a><a class="btn btn-ghost btn-sm" href="https://raw.githubusercontent.com/KingRSW/lingua-link/main/resign_iphone.sh" target="_blank" rel="noopener">⬇ resign_iphone.sh</a><a class="btn btn-ghost btn-sm" href="https://raw.githubusercontent.com/KingRSW/lingua-link/main/auto_resign.sh" target="_blank" rel="noopener">⬇ auto_resign.sh</a></div>
+<details class="src"><summary>sign.sh 完整源码</summary><pre><code>#!/usr/bin/env bash
+# ============================================================================
+# sign.sh — 通用 iOS IPA 签名 / 打包工具
+# ----------------------------------------------------------------------------
+# 两种模式:
+#   A) ad-hoc 模式 (默认, 不给证书):
+#      只给主 app 打 ad-hoc 占位签名, Framework 保持未签, 干净打包
+#      —— 给爱思助手/AltStore 用免费 Apple ID 重签时, 避免 &quot;安装包不完整&quot;
+#   B) cert 模式 (显式给 .p12 + .mobileprovision, 或 --identity + .mobileprovision):
+#      用证书把 Framework + 主 app 全签好, 直接出可装包 (不走爱思助手重签)
+#      --identity 可直接用 Mac 登录钥匙串里已有的真实 Apple 证书 (如免费 Apple ID 的开发证书)
+#
+# 用法:
+#   sign.sh [选项] &lt;ipa&gt; [证书目录或 ad-hoc]
+#
+# 选项:
+#   --fix-id            cert 模式: AppID 对不上时自动改写 IPA 的 bundle ID 为证书的 AppID
+#   --out &lt;dir&gt;         签名结果输出目录 (默认 = IPA 所在目录)
+#   --p12 &lt;file&gt;        cert 模式: 指定 .p12 (购买证书, 如 iosxb.cn)
+#   --identity &lt;sha1|名称&gt;  cert 模式: 直接用登录钥匙串里的真实 Apple 证书 (免导 p12)
+#   --prov &lt;file&gt;       cert 模式: 指定 .mobileprovision
+#   --password &lt;pw&gt;      p12 密码 (默认: 环境变量 P12_PASSWORD / 文件名 密码_xxx / 兜底 iosxb.cn)
+#   --no-verify         跳过验签打印
+#   -h | --help         帮助
+# ============================================================================
+
+set -eo pipefail
+
+red()   { printf &quot;\033[31m%s\033[0m\n&quot; &quot;$*&quot;; }
+green() { printf &quot;\033[32m%s\033[0m\n&quot; &quot;$*&quot;; }
+blue()  { printf &quot;\033[34m%s\033[0m\n&quot; &quot;$*&quot;; }
+die()   { red &quot;$*&quot;; exit 1; }
+
+# 生成一个&quot;伪 ad-hoc 描述文件&quot;并嵌入 app, 修爱思助手&quot;安装包不完整&quot;
+# 用 openssl 自签证书 + plist, 然后用 smime 包成 iOS 认识的 CMS/DER 结构
+make_adhoc_prov() {
+  local app_dir=&quot;$1&quot; bundle_id=&quot;$2&quot;
+  local out=&quot;$app_dir/embedded.mobileprovision&quot;
+  local tmpdir team_id=&quot;ZZZZZZZZZZ&quot;
+  tmpdir=$(mktemp -d -t adhocprov)
+  # 1. 临时自签证书 (cert + key, 10 年)
+  openssl req -x509 -newkey rsa:2048 \
+    -keyout &quot;$tmpdir/key.pem&quot; -out &quot;$tmpdir/cert.pem&quot; \
+    -days 3650 -nodes -subj &quot;/CN=Adhoc Provisioning&quot; &gt;/dev/null 2&gt;&amp;1 \
+    || { rm -rf &quot;$tmpdir&quot;; return 1; }
+  # 2. 写符合 iOS 期望的 plist (结构上像&quot;单设备 ad-hoc 开发描述文件&quot;)
+  # 关键: 去掉 ProvisionsAllDevices (这是企业证书专属, 会触发爱思助手&quot;越狱版&quot;标记)
+  # 改成 ProvisionedDevices 数组 (单个 dummy UDID), 看起来更像免费 Apple ID 的开发描述
+  cat &gt; &quot;$tmpdir/profile.plist&quot; &lt;&lt;EOF
+&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;!DOCTYPE plist PUBLIC &quot;-//Apple//DTD PLIST 1.0//EN&quot; &quot;http://www.apple.com/DTDs/PropertyList-1.0.dtd&quot;&gt;
+&lt;plist version=&quot;1.0&quot;&gt;
+&lt;dict&gt;
+    &lt;key&gt;AppIDName&lt;/key&gt;&lt;string&gt;Adhoc Sideload&lt;/string&gt;
+    &lt;key&gt;ApplicationIdentifierPrefix&lt;/key&gt;&lt;array&gt;&lt;string&gt;${team_id}&lt;/string&gt;&lt;/array&gt;
+    &lt;key&gt;CreationDate&lt;/key&gt;&lt;date&gt;2024-01-01T00:00:00Z&lt;/date&gt;
+    &lt;key&gt;ExpirationDate&lt;/key&gt;&lt;date&gt;2099-12-31T00:00:00Z&lt;/date&gt;
+    &lt;key&gt;Entitlements&lt;/key&gt;&lt;dict&gt;
+        &lt;key&gt;application-identifier&lt;/key&gt;&lt;string&gt;${team_id}.${bundle_id}&lt;/string&gt;
+        &lt;key&gt;get-task-allow&lt;/key&gt;&lt;true/&gt;
+        &lt;key&gt;keychain-access-groups&lt;/key&gt;&lt;array&gt;&lt;string&gt;${team_id}.*&lt;/string&gt;&lt;/array&gt;
+    &lt;/dict&gt;
+    &lt;key&gt;Name&lt;/key&gt;&lt;string&gt;${bundle_id}&lt;/string&gt;
+    &lt;key&gt;ProvisionedDevices&lt;/key&gt;&lt;array&gt;&lt;string&gt;00000000-0000000000000000&lt;/string&gt;&lt;/array&gt;
+    &lt;key&gt;TeamIdentifier&lt;/key&gt;&lt;array&gt;&lt;string&gt;${team_id}&lt;/string&gt;&lt;/array&gt;
+    &lt;key&gt;TeamName&lt;/key&gt;&lt;string&gt;Adhoc Team&lt;/string&gt;
+    &lt;key&gt;UUID&lt;/key&gt;&lt;string&gt;$(uuidgen)&lt;/string&gt;
+    &lt;key&gt;Version&lt;/key&gt;&lt;integer&gt;1&lt;/integer&gt;
+&lt;/dict&gt;
+&lt;/plist&gt;
+EOF
+  # 3. openssl smime 把它包成 CMS/DER (iOS 识别的描述文件格式)
+  if openssl smime -sign \
+      -in &quot;$tmpdir/profile.plist&quot; -out &quot;$out&quot; \
+      -signer &quot;$tmpdir/cert.pem&quot; -inkey &quot;$tmpdir/key.pem&quot; \
+      -certfile &quot;$tmpdir/cert.pem&quot; \
+      -outform DER -nodetach &gt;/dev/null 2&gt;&amp;1 &amp;&amp; [ -s &quot;$out&quot; ]; then
+    rm -rf &quot;$tmpdir&quot;
+    return 0
+  else
+    rm -rf &quot;$tmpdir&quot;
+    return 1
+  fi
+}
+
+IPA=&quot;&quot;
+CERT_DIR=&quot;.&quot;
+P12=&quot;&quot;
+IDENTITY=&quot;&quot;
+PROV=&quot;&quot;
+PASSWORD=&quot;&quot;
+FIX_ID=0
+OUT_DIR=&quot;&quot;
+show_help=0
+VERIFY=1
+
+while [ $# -gt 0 ]; do
+  case &quot;$1&quot; in
+    --fix-id)    FIX_ID=1 ;;
+    --out)       OUT_DIR=&quot;$2&quot;; shift ;;
+    --p12)       P12=&quot;$2&quot;; shift ;;
+    --identity)  IDENTITY=&quot;$2&quot;; shift ;;
+    --prov)      PROV=&quot;$2&quot;; shift ;;
+    --password)  PASSWORD=&quot;$2&quot;; shift ;;
+    --no-verify) VERIFY=0 ;;
+    -h|--help)   show_help=1 ;;
+    *)  [ -z &quot;$IPA&quot; ] &amp;&amp; IPA=&quot;$1&quot; || CERT_DIR=&quot;$1&quot; ;;
+  esac
+  shift
+done
+
+if [ &quot;$show_help&quot; = 1 ]; then sed -n &#x27;3,28p&#x27; &quot;$0&quot;; exit 0; fi
+[ -z &quot;$IPA&quot; ] &amp;&amp; die &quot;用法: $0 [选项] &lt;ipa&gt; [证书目录]  (--help 看详情)&quot;
+[ -f &quot;$IPA&quot; ] || die &quot;找不到 IPA: $IPA&quot;
+
+# 是否在 cert 模式: 只有显式传 --p12 / --prov / --identity 才算
+CERT_MODE=0
+if [ -n &quot;$P12&quot; ] || [ -n &quot;$PROV&quot; ] || [ -n &quot;$IDENTITY&quot; ]; then CERT_MODE=1; fi
+
+WORK=$(mktemp -d -t signipa)
+trap &#x27;rm -rf &quot;$WORK&quot;&#x27; EXIT
+
+# ----- 解 IPA -----
+mkdir -p &quot;$WORK/payload&quot;
+unzip -q &quot;$IPA&quot; -d &quot;$WORK/payload&quot;
+APP_DIR=$(find &quot;$WORK/payload/Payload&quot; -maxdepth 1 -name &quot;*.app&quot; | head -1)
+[ -n &quot;$APP_DIR&quot; ] || die &quot;IPA 里没找到 .app&quot;
+APP_BUNDLE=$(/usr/libexec/PlistBuddy -c &quot;Print :CFBundleIdentifier&quot; &quot;$APP_DIR/Info.plist&quot;)
+APP_NAME=$(basename &quot;$APP_DIR&quot; .app)
+blue &quot;目标 App:  $APP_NAME ($APP_BUNDLE)&quot;
+
+# ============================================================
+# 模式 A: ad-hoc (爱思助手/AltStore 重签场景)
+# ============================================================
+if [ &quot;$CERT_MODE&quot; = 0 ]; then
+  blue &quot;模式: ad-hoc 占位签名 (Framework 先剥真签名再强制 ad-hoc, 防重签冲突)&quot;
+  if [ -d &quot;$APP_DIR/Frameworks&quot; ]; then
+    for fw in &quot;$APP_DIR/Frameworks&quot;/*; do
+      [ -e &quot;$fw&quot; ] || continue
+      # 先剥离源包里可能残留的真(分发/企业)签名, 再强制打 ad-hoc 占位
+      codesign --remove-signature &quot;$fw&quot; &gt;/dev/null 2&gt;&amp;1 || true
+      codesign --force --sign - --timestamp=none &quot;$fw&quot; &gt;/dev/null 2&gt;&amp;1 || true
+    done
+  fi
+  # 主 app 打 ad-hoc 占位
+  codesign --force --sign - --timestamp=none &quot;$APP_DIR&quot; &gt;/dev/null 2&gt;&amp;1 \
+    || die &quot;ad-hoc 占位签名失败&quot;
+  codesign --verify --strict &quot;$APP_DIR&quot; &gt;/dev/null 2&gt;&amp;1 \
+    || blue &quot;⚠️  主 app 占位签名校验未过, 但爱思助手一般会重签&quot;
+  # 缺 embedded.mobileprovision → 生成伪 ad-hoc 描述文件, 修&quot;安装包不完整&quot;
+  if [ ! -f &quot;$APP_DIR/embedded.mobileprovision&quot; ]; then
+    blue &quot;源 IPA 没带 embedded.mobileprovision, 生成伪 ad-hoc 描述文件&quot;
+    if make_adhoc_prov &quot;$APP_DIR&quot; &quot;$APP_BUNDLE&quot;; then
+      green &quot;✓ 已嵌入伪 ad-hoc 描述文件&quot;
+    else
+      blue &quot;⚠️  伪描述文件生成失败, 爱思助手可能仍报&quot;安装包不完整&quot;&quot;
+    fi
+  fi
+  MODE_TAG=&quot;adhoc&quot;
+else
+  # ==========================================================
+  # 模式 B: cert 全签
+  # ==========================================================
+  [ -z &quot;$PROV&quot; ] &amp;&amp; PROV=$(find &quot;$CERT_DIR&quot; -maxdepth 2 -name &quot;*.mobileprovision&quot; 2&gt;/dev/null | head -1)
+  [ -n &quot;$PROV&quot; ] || die &quot;cert 模式需要 .mobileprovision (用 --prov 指定)&quot;
+  [ -f &quot;$PROV&quot; ] || die &quot;找不到描述文件: $PROV&quot;
+  blue &quot;描述:  $(basename &quot;$PROV&quot;)&quot;
+
+  # 拿签名身份有两种方式:
+  #   A) --p12  → 临时钥匙串导入 (iosxb.cn 这类购买证书)
+  #   B) --identity (SHA1 或名称) → 直接用登录钥匙串里已有的真实 Apple 证书
+  if [ -n &quot;$P12&quot; ]; then
+    [ -z &quot;$IDENTITY&quot; ] &amp;&amp; blue &quot;证书:  $(basename &quot;$P12&quot;)&quot;
+    # 密码
+    [ -z &quot;$PASSWORD&quot; ] &amp;&amp; PASSWORD=&quot;${P12_PASSWORD:-}&quot;
+    [ -z &quot;$PASSWORD&quot; ] &amp;&amp; PASSWORD=$(basename &quot;$P12&quot; | sed -nE &#x27;s/.*(密码|pwd)[_-]([^)]+).*/\2/p&#x27; | head -1)
+    [ -z &quot;$PASSWORD&quot; ] &amp;&amp; PASSWORD=&quot;iosxb.cn&quot;
+    [ -z &quot;$IDENTITY&quot; ] &amp;&amp; green &quot;p12 密码: $PASSWORD&quot;
+    # 临时钥匙串 + OpenSSL 绕过 macOS PKCS12 MAC 限制
+    KC=&quot;$WORK/sign.keychain&quot;; KC_PW=$(openssl rand -hex 16)
+    security create-keychain -p &quot;$KC_PW&quot; &quot;$KC&quot; &gt;/dev/null
+    security set-keychain-settings -lut 21600 &quot;$KC&quot; &gt;/dev/null
+    security unlock-keychain -p &quot;$KC_PW&quot; &quot;$KC&quot; &gt;/dev/null
+    security list-keychains -d user -s &quot;$KC&quot; $(security list-keychains -d user | tr -d &#x27;&quot;&#x27;) &gt;/dev/null
+    openssl pkcs12 -in &quot;$P12&quot; -passin pass:&quot;$PASSWORD&quot; -nodes -nokeys -out &quot;$WORK/cert.pem&quot; 2&gt;/dev/null
+    openssl pkcs12 -in &quot;$P12&quot; -passin pass:&quot;$PASSWORD&quot; -nodes -nocerts -out &quot;$WORK/key.pem&quot; 2&gt;/dev/null
+    [ -s &quot;$WORK/key.pem&quot; ] &amp;&amp; grep -q &quot;PRIVATE KEY&quot; &quot;$WORK/key.pem&quot; || die &quot;p12 解密失败: 密码不对或文件损坏&quot;
+    security import &quot;$WORK/cert.pem&quot; -k &quot;$KC&quot; -T /usr/bin/codesign &gt;/dev/null 2&gt;&amp;1 || true
+    security import &quot;$WORK/key.pem&quot;  -k &quot;$KC&quot; -T /usr/bin/codesign &gt;/dev/null 2&gt;&amp;1 || true
+    if [ -z &quot;$IDENTITY&quot; ]; then
+      IDENTITY=$(security find-identity -v -p codesigning &quot;$KC&quot; 2&gt;/dev/null \
+        | sed -nE &#x27;s/^[[:space:]]*[0-9]+\) ([A-F0-9]+) &quot;.*&quot;/\1/p&#x27; | head -1)
+    fi
+  elif [ -n &quot;$IDENTITY&quot; ]; then
+    blue &quot;签名身份: 直接用登录钥匙串里的 $IDENTITY&quot;
+  else
+    die &quot;cert 模式需要 .p12 (--p12) 或 钥匙串身份 (--identity)&quot;
+  fi
+  [ -n &quot;$IDENTITY&quot; ] || die &quot;没找到可用的签名身份&quot;
+  green &quot;签名身份: $IDENTITY&quot;
+
+  security cms -D -i &quot;$PROV&quot; -o &quot;$WORK/prov.plist&quot; &gt;/dev/null
+  /usr/libexec/PlistBuddy -x -c &quot;Print :Entitlements&quot; &quot;$WORK/prov.plist&quot; &gt; &quot;$WORK/entitlements.plist&quot;
+  PROV_BUNDLE=$(/usr/libexec/PlistBuddy -c &quot;Print :Entitlements:application-identifier&quot; &quot;$WORK/prov.plist&quot; \
+    | sed &#x27;s/^[A-Z0-9]*\.//&#x27;)
+  blue &quot;描述文件 AppID: $PROV_BUNDLE&quot;
+
+  if [ &quot;$APP_BUNDLE&quot; != &quot;$PROV_BUNDLE&quot; ]; then
+    if [ &quot;$FIX_ID&quot; = 1 ]; then
+      blue &quot;⚠️  --fix-id: 改写 IPA bundle ID 为 $PROV_BUNDLE&quot;
+      /usr/libexec/PlistBuddy -c &quot;Set :CFBundleIdentifier $PROV_BUNDLE&quot; &quot;$APP_DIR/Info.plist&quot;
+      APP_BUNDLE=&quot;$PROV_BUNDLE&quot;
+    else
+      die &quot;❌ bundle ID 不匹配: App=$APP_BUNDLE  vs  Provision=$PROV_BUNDLE
+   方案A: 让卖家按 $APP_BUNDLE 重发描述文件
+   方案B: 加 --fix-id 改写 IPA 的 bundle ID&quot;
+    fi
+  fi
+
+  cp &quot;$PROV&quot; &quot;$APP_DIR/embedded.mobileprovision&quot;
+
+  # 签 Framework (从内向外), 再签主 app
+  if [ -d &quot;$APP_DIR/Frameworks&quot; ]; then
+    for FW in $(find &quot;$APP_DIR/Frameworks&quot; \( -name &quot;*.framework&quot; -o -name &quot;*.dylib&quot; \) 2&gt;/dev/null | sort); do
+      codesign --force --sign &quot;$IDENTITY&quot; --generate-entitlement-der --timestamp=none &quot;$FW&quot; 2&gt;&amp;1 | sed &#x27;s/^/  /&#x27;
+    done
+  fi
+  codesign --force --sign &quot;$IDENTITY&quot; \
+    --entitlements &quot;$WORK/entitlements.plist&quot; \
+    --generate-entitlement-der --preserve-metadata=identifier,flags \
+    &quot;$APP_DIR&quot; 2&gt;&amp;1 | sed &#x27;s/^/  /&#x27;
+  MODE_TAG=&quot;signed&quot;
+fi
+
+# ----- 干净重新打包 (从 Payload 父目录 zip, 保留 Payload/ 前缀) -----
+[ -z &quot;$OUT_DIR&quot; ] &amp;&amp; OUT_DIR=&quot;$(dirname &quot;$IPA&quot;)&quot;
+mkdir -p &quot;$OUT_DIR&quot;
+OUT=&quot;$(cd &quot;$OUT_DIR&quot; &amp;&amp; pwd)/$(basename &quot;$IPA&quot; .ipa)-${MODE_TAG}.ipa&quot;
+rm -f &quot;$OUT&quot;
+( cd &quot;$WORK/payload&quot; &amp;&amp; zip -qr &quot;$OUT&quot; Payload -x &quot;*.DS_Store&quot; &quot;__MACOSX/*&quot; )
+green &quot;✅ 已生成: $OUT&quot;
+
+if [ &quot;$VERIFY&quot; = 1 ]; then
+  echo &quot;&quot;
+  blue &quot;--- 验签 ---&quot;
+  codesign -dv &quot;$APP_DIR&quot; 2&gt;&amp;1 | grep -E &quot;Identifier|TeamIdentifier|Signature size|Signed Time&quot; || true
+fi
+green &quot;完成。&quot;
+</code></pre></details>
+<details class="src"><summary>resign_iphone.sh 完整源码</summary><pre><code>#!/usr/bin/env bash
+# ============================================================================
+# resign_iphone.sh — LinguaLink 一键重签并装回 iPhone（免费 Apple ID，7 天有效）
+# ----------------------------------------------------------------------------
+# 用法：
+#   bash resign_iphone.sh
+# 前提：
+#   - 手机解锁，且与 Mac 在同一 Wi-Fi（或 USB 连着）
+#   - 免费 Apple ID(quanwei / KDX2FPABY9) 仍在 Xcode 登录态
+# 说明：每 7 天跑一次即可让 App 持续可用，无需花钱、无需开 Xcode 手动操作。
+# ============================================================================
+set -e
+
+PROJ=&quot;/Users/kingrsw/lingua link&quot;
+UDID=&quot;00008150-000A4951210A401C&quot;
+BACKEND=&quot;https://wqrxitueiqooakzkwenm.supabase.co/functions/v1/lingua-payment&quot;
+
+cd &quot;$PROJ&quot; || { echo &quot;❌ 找不到项目目录 $PROJ&quot;; exit 1; }
+
+echo &quot;▶ 检查设备是否在线...&quot;
+if ! xcrun devicectl list devices 2&gt;/dev/null | grep -q &quot;available (paired)&quot;; then
+  echo &quot;⚠️  手机不可达：请解锁 iPhone 并连同一 Wi-Fi（或插 USB），然后重跑本脚本。&quot;
+  exit 1
+fi
+
+echo &quot;▶ 构建 iOS release（自动用免费团队 KDX2FPABY9 签名）...&quot;
+flutter build ios --release \
+  --dart-define=PAYMENT_BACKEND=&quot;$BACKEND&quot; \
+  --dart-define=PAYMENT_DEV=false
+
+echo &quot;▶ 无线装回 iPhone（devicectl）...&quot;
+xcrun devicectl device install app --device &quot;$UDID&quot; build/ios/iphoneos/Runner.app
+
+echo &quot;&quot;
+echo &quot;✅ 重签完成！App 有效期已刷新为 7 天。&quot;
+echo &quot;   下次到期前再跑一次本脚本即可（建议让定时任务自动跑）。&quot;
+</code></pre></details>
+<details class="src"><summary>auto_resign.sh 完整源码</summary><pre><code>#!/usr/bin/env bash
+# ============================================================================
+# auto_resign.sh — 检测免费证书是否满 7 天，满了才自动重签 LinguaLink
+# ----------------------------------------------------------------------------
+# 设计：
+#   - 用状态文件 .resign_last 记录上次【成功】重签的时间戳。
+#   - 距上次 &lt; 7 天 → 直接跳过（打印剩余天数），不浪费时间。
+#   - 距上次 &gt;= 7 天（或无记录）→ 检查手机在线 → flutter build → 无线装回；
+#     成功才更新时间戳，失败（手机不可达等）不更新 → 下次再试（自愈）。
+#   - 所有动作写 resign.log，方便排查。
+# 由 launchd / 定时任务每天跑一次即可；它自己判断&quot;是否到 7 天&quot;。
+# ============================================================================
+export PATH=&quot;/Users/kingrsw/develop/flutter/bin:$PATH&quot;
+
+PROJ=&quot;/Users/kingrsw/lingua link&quot;
+UDID=&quot;00008150-000A4951210A401C&quot;
+BACKEND=&quot;https://wqrxitueiqooakzkwenm.supabase.co/functions/v1/lingua-payment&quot;
+STATE=&quot;$PROJ/.resign_last&quot;
+LOG=&quot;$PROJ/resign.log&quot;
+INTERVAL=$(( 7 * 24 * 3600 ))   # 7 天（秒）
+NOW=$(date +%s)
+
+log() { echo &quot;$(date &#x27;+%Y-%m-%d %H:%M&#x27;) $*&quot; | tee -a &quot;$LOG&quot;; }
+
+# ---- 1) 是否到 7 天 ----
+if [ -f &quot;$STATE&quot; ]; then
+  LAST=$(cat &quot;$STATE&quot; 2&gt;/dev/null || echo 0)
+  [[ &quot;$LAST&quot; =~ ^[0-9]+$ ]] || LAST=0
+  ELAPSED=$(( NOW - LAST ))
+  if [ &quot;$ELAPSED&quot; -lt &quot;$INTERVAL&quot; ]; then
+    LEFT=$(( (INTERVAL - ELAPSED) / 86400 ))
+    HRS=$(( ((INTERVAL - ELAPSED) % 86400) / 3600 ))
+    log &quot;✅ 尚未到 7 天（还剩约 ${LEFT} 天 ${HRS} 小时），跳过重签。&quot;
+    exit 0
+  fi
+  log &quot;⏰ 距上次重签已超 7 天，开始重签...&quot;
+else
+  log &quot;⏰ 无重签记录，首次执行，开始重签...&quot;
+fi
+
+# ---- 2) 手机在线检查 ----
+if ! xcrun devicectl list devices 2&gt;/dev/null | grep -q &quot;available (paired)&quot;; then
+  log &quot;⚠️ 手机不可达（需解锁 + 同 Wi-Fi / USB），本次跳过，下次再试。&quot;
+  exit 1
+fi
+
+# ---- 3) 构建 + 安装 ----
+cd &quot;$PROJ&quot; || exit 1
+log &quot;▶ flutter build ios --release ...&quot;
+if ! flutter build ios --release \
+  --dart-define=PAYMENT_BACKEND=&quot;$BACKEND&quot; \
+  --dart-define=PAYMENT_DEV=false &gt;&gt;&quot;$LOG&quot; 2&gt;&amp;1; then
+  log &quot;❌ 构建失败，保留旧记录，下次再试。&quot;
+  exit 1
+fi
+
+log &quot;▶ 无线装回 iPhone ...&quot;
+if xcrun devicectl device install app --device &quot;$UDID&quot; build/ios/iphoneos/Runner.app &gt;&gt;&quot;$LOG&quot; 2&gt;&amp;1; then
+  echo &quot;$NOW&quot; &gt; &quot;$STATE&quot;
+  log &quot;✅ 重签完成，有效期刷新为 7 天。&quot;
+  exit 0
+else
+  log &quot;❌ 安装失败，保留旧记录，下次再试。&quot;
+  exit 1
+fi
+</code></pre></details>
+
           </div>
         </div>
       </div>
