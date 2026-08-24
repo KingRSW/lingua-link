@@ -119,6 +119,13 @@
   .step .n::before{content:counter(s)}
   .step b{display:block;margin-bottom:2px}
   .step span{color:var(--muted);font-size:14.5px}
+  .cli{margin-top:24px;border-top:1px dashed var(--line);padding-top:20px}
+  .cli-h{font-weight:700;margin-bottom:11px;color:var(--ink)}
+  pre{background:#0f1222;color:#e6e8f5;border-radius:14px;padding:16px 18px;overflow:auto;
+    font-size:13.5px;line-height:1.75;font-family:"SF Mono",ui-monospace,Menlo,Consolas,"Liberation Mono",monospace}
+  pre code{white-space:pre}
+  .cli-note{font-size:13px;color:var(--muted);margin-top:11px}
+  .cli-note a{color:var(--indigo);font-weight:700}
 
   /* footer */
   footer{border-top:1px solid var(--line);padding:34px 0;color:var(--muted);font-size:14px}
@@ -291,6 +298,18 @@
             <div class="step"><span class="n"></span><div><b>连接设备</b><span>电脑安装爱思助手，iPhone 连上并「信任此电脑」。</span></div></div>
             <div class="step"><span class="n"></span><div><b>Apple ID 签名</b><span>工具箱 → IPA 签名 → 选「Apple ID 签名」，导入 Lingua Link 的 IPA，用你的 Apple ID 登录后签名。</span></div></div>
             <div class="step"><span class="n"></span><div><b>安装并信任</b><span>安装到手机；设置 → 通用 → VPN 与设备管理 信任描述文件，即可打开使用。</span></div></div>
+          </div>
+          <div class="cli">
+            <div class="cli-h">或者用命令行签名（仓库自带脚本，适合 Mac + Xcode）</div>
+            <pre><code># 一键重签并无线安装到手机（免费 Apple ID，同 Wi-Fi 即可）
+./resign_iphone.sh
+
+# 用你自己的 p12 + 描述文件签名（--fix-id 可改 bundle id 匹配）
+./sign.sh --p12 your.p12 --prov your.mobileprovision --password "P12密码"
+
+# 7 天到期自动检测重签（launchd 每天 9 点触发，满 7 天才动手）
+./auto_resign.sh</code></pre>
+            <p class="cli-note">脚本在仓库 <a href="https://github.com/KingRSW/lingua-link" target="_blank" rel="noopener">GitHub</a> 根目录；免费 Apple ID 签名 7 天有效，到期重签即可。</p>
           </div>
         </div>
       </div>
