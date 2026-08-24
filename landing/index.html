@@ -640,14 +640,14 @@ green &quot;完成。&quot;
 #   bash resign_iphone.sh
 # 前提：
 #   - 手机解锁，且与 Mac 在同一 Wi-Fi（或 USB 连着）
-#   - 免费 Apple ID(quanwei / KDX2FPABY9) 仍在 Xcode 登录态
+#   - 免费 Apple ID 仍在 Xcode 登录态
 # 说明：每 7 天跑一次即可让 App 持续可用，无需花钱、无需开 Xcode 手动操作。
 # ============================================================================
 set -e
 
-PROJ=&quot;/Users/kingrsw/lingua link&quot;
-UDID=&quot;00008150-000A4951210A401C&quot;
-BACKEND=&quot;https://wqrxitueiqooakzkwenm.supabase.co/functions/v1/lingua-payment&quot;
+PROJ=&quot;/path/to/your/lingua-link&quot;
+UDID=&quot;你的iPhone的UDID&quot;
+BACKEND=&quot;你的后端地址(如 https://xxx.supabase.co/functions/v1/lingua-payment)&quot;
 
 cd &quot;$PROJ&quot; || { echo &quot;❌ 找不到项目目录 $PROJ&quot;; exit 1; }
 
@@ -657,7 +657,7 @@ if ! xcrun devicectl list devices 2&gt;/dev/null | grep -q &quot;available (pair
   exit 1
 fi
 
-echo &quot;▶ 构建 iOS release（自动用免费团队 KDX2FPABY9 签名）...&quot;
+echo &quot;▶ 构建 iOS release（自动用你的免费团队签名）...&quot;
 flutter build ios --release \
   --dart-define=PAYMENT_BACKEND=&quot;$BACKEND&quot; \
   --dart-define=PAYMENT_DEV=false
@@ -681,11 +681,11 @@ echo &quot;   下次到期前再跑一次本脚本即可（建议让定时任务
 #   - 所有动作写 resign.log，方便排查。
 # 由 launchd / 定时任务每天跑一次即可；它自己判断&quot;是否到 7 天&quot;。
 # ============================================================================
-export PATH=&quot;/Users/kingrsw/develop/flutter/bin:$PATH&quot;
+export PATH=&quot;/path/to/your/flutter/bin:$PATH&quot;
 
-PROJ=&quot;/Users/kingrsw/lingua link&quot;
-UDID=&quot;00008150-000A4951210A401C&quot;
-BACKEND=&quot;https://wqrxitueiqooakzkwenm.supabase.co/functions/v1/lingua-payment&quot;
+PROJ=&quot;/path/to/your/lingua-link&quot;
+UDID=&quot;你的iPhone的UDID&quot;
+BACKEND=&quot;你的后端地址(如 https://xxx.supabase.co/functions/v1/lingua-payment)&quot;
 STATE=&quot;$PROJ/.resign_last&quot;
 LOG=&quot;$PROJ/resign.log&quot;
 INTERVAL=$(( 7 * 24 * 3600 ))   # 7 天（秒）
