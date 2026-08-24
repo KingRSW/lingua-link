@@ -79,11 +79,12 @@ class SubscriptionService {
   /// 后端签发的 membership token（HS256）；调用 /ai-polish、/ocr 时由 apiAuthHeaders 带上。
   String? get membershipToken => _entitlement.token;
 
-  /// 调用 PRO 权益接口时的请求头（含 membership token）。
-  Map<String, String> get apiAuthHeaders => {
-        'content-type': 'application/json',
-        if (_entitlement.token != null) 'authorization': 'Bearer ${_entitlement.token}',
-      };
+  /// 调用 PRO 权益接口时的请求头（含 Supabase apikey + membership token）。
+  Map<String, String> get apiAuthHeaders => backendHeaders(
+        _entitlement.token != null
+            ? {'authorization': 'Bearer ${_entitlement.token}'}
+            : null,
+      );
 
   /// 兑换码解锁：请求后端 /redeem，由服务端校验签名并签发 membership token。
   /// 返回是否成功；成功后写入本地 entitlement（带 token，source = 'redeem'）。
@@ -95,7 +96,7 @@ class SubscriptionService {
       final resp = await http
           .post(
             Uri.parse('$backend/redeem'),
-            headers: {'content-type': 'application/json'},
+            headers: backendHeaders(),
             body: jsonEncode({'code': raw.trim()}),
           )
           .timeout(const Duration(seconds: 15));

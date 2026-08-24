@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'payment/models.dart';
 import 'payment/payment_provider.dart';
@@ -40,6 +42,29 @@ class _PaywallScreenState extends State<PaywallScreen> {
     _Feature('拍照翻译', '拍照 / 选图 OCR 翻译'),
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    _resumePending();
+  }
+
+  /// 重进付费页时补查上次未完成的订单：卖家可能在别的界面已确认，
+  /// 若已 paid 则自动开通，避免「确认成功却没开通」。
+  Future<void> _resumePending() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final oid = prefs.getString('lingua_pending_order');
+      if (oid == null || oid.isEmpty) return;
+      final e = await _provider.queryEntitlement(oid);
+      if (e.isPremium) {
+        await SubscriptionService.instance.activatePurchase(e);
+        await prefs.remove('lingua_pending_order');
+      }
+    } catch (_) {
+      // 忽略：下次进入再补查
+    }
+  }
+
   Future<void> _redeem() async {
     setState(() {
       _busy = true;
@@ -57,6 +82,133 @@ class _PaywallScreenState extends State<PaywallScreen> {
     }
   }
 
+  /// 微信真实模式：在 App 内渲染支付二维码，用户扫码付款。
+  Future<void> _showWxQrDialog(String codeUrl) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('微信扫码支付'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Color(0xFFE4E4EC)),
+              ),
+              child: QrImageView(
+                data: codeUrl,
+                version: QrVersions.auto,
+                size: 220,
+                gapless: true,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text('用微信「扫一扫」完成支付，支付成功后将自动开通。',
+                style: TextStyle(fontSize: 13, color: Color(0xFF8A8F9C)),
+                textAlign: TextAlign.center),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('我已支付 / 关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 个人收款码模式（免营业执照）：展示微信/支付宝收款码，用户扫码付款后凭解锁码激活。
+  Future<void> _showPersonalQrDialog(Order order) async {
+    debugPrint('[paywall] _showPersonalQrDialog: wxQr=${order.wxQr} aliQr=${order.aliQr} label=${order.label} priceCny=${order.priceCny}');
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('开通${order.label ?? ''} · ¥${order.priceCny?.toStringAsFixed(0) ?? ''}'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (order.wxQr != null && order.wxQr!.isNotEmpty)
+                _QrTile(label: '微信支付', url: order.wxQr!)
+              else
+                const Text('（未配置微信收款码）', style: TextStyle(fontSize: 13, color: Color(0xFF8A8F9C))),
+              const SizedBox(height: 14),
+              if (order.aliQr != null && order.aliQr!.isNotEmpty)
+                _QrTile(label: '支付宝', url: order.aliQr!)
+              else
+                const Text('（未配置支付宝收款码）', style: TextStyle(fontSize: 13, color: Color(0xFF8A8F9C))),
+              const SizedBox(height: 14),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF2F3F7),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: SelectableText('订单号：${order.orderId}',
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF5D6CFF), fontWeight: FontWeight.w600)),
+              ),
+              const SizedBox(height: 8),
+              const Text('付款后把订单号发给卖家，卖家确认后自动开通',
+                  style: TextStyle(fontSize: 13, color: Color(0xFF8A8F9C)), textAlign: TextAlign.center),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('我知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _QrTile({ required String label, required String url }) {
+    // 相对路径按当前页面 origin 解析（图床放 web/pay_qr/ 时无需填绝对 URL）；绝对 URL/data URL 直接传。
+    String src;
+    try {
+      if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) {
+        src = url;
+      } else {
+        final base = Uri.base;
+        src = (base != null && base.toString().isNotEmpty)
+            ? base.resolve(url).toString()
+            : url;
+      }
+    } catch (_) {
+      src = url;
+    }
+    return Column(
+      children: [
+        Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF202536))),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Color(0xFFE4E4EC)),
+          ),
+          child: src.isEmpty
+              ? const Text('图片地址为空', style: TextStyle(fontSize: 12, color: Color(0xFF8A8F9C)))
+              : Image(
+                  image: NetworkImage(src),
+                  width: 200,
+                  height: 200,
+                  fit: BoxFit.contain,
+                  errorBuilder: (BuildContext ctx, Object err, StackTrace? stack) =>
+                    const Text('图片加载失败', style: TextStyle(fontSize: 12, color: Color(0xFF8A8F9C))),
+                ),
+        ),
+      ],
+    );
+  }
+
   /// 走支付流程：下单 → 拉起收银台 → 轮询权益。
   Future<void> _pay(Plan plan) async {
     setState(() {
@@ -65,8 +217,53 @@ class _PaywallScreenState extends State<PaywallScreen> {
       _msg = null;
     });
     try {
-      final order = await _provider.createOrder(plan);
-      await _provider.launchPay(order);
+      debugPrint('[paywall] _pay: plan=${plan.id}');
+      Order order;
+      try {
+        order = await _provider.createOrder(plan);
+      } catch (e) {
+        throw Exception('【下单阶段】$e');
+      }
+      debugPrint('[paywall] order: mode=${order.mode} label=${order.label} priceCny=${order.priceCny} wxQr=${order.wxQr} aliQr=${order.aliQr} orderId.len=${order.orderId.length} payUrl.len=${order.payUrl.length}');
+      if (order.mode == 'personal') {
+        // 记下本机待确认订单，便于离开本页后（卖家在别处确认）重进时补查开通。
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('lingua_pending_order', order.orderId);
+        } catch (_) {}
+        // 个人收款码模式（免营业执照）：展示收款码，收款方确认收款后会员自动开通（用户免输码）。
+        try {
+          if (mounted) await _showPersonalQrDialog(order);
+        } catch (e) {
+          throw Exception('【弹窗阶段】$e');
+        }
+        // 轮询：收款方在微信/支付宝看到到账并确认后，订单标记 paid，此处自动开通。
+        Entitlement e = const Entitlement(isPremium: false);
+        for (int i = 0; i < 60; i++) {
+          await Future.delayed(const Duration(seconds: 2));
+          if (!mounted) return;
+          e = await _provider.queryEntitlement(order.orderId);
+          if (e.isPremium) break;
+        }
+        if (e.isPremium) {
+          await SubscriptionService.instance.activatePurchase(e);
+          try {
+            (await SharedPreferences.getInstance()).remove('lingua_pending_order');
+          } catch (_) {}
+          setState(() => _msg = '✅ 会员已开通！');
+          await Future.delayed(const Duration(seconds: 1));
+          if (mounted) Navigator.of(context).pop();
+        } else {
+          setState(() => _msg = '💡 已付款？把订单号发给卖家，卖家确认后自动开通');
+        }
+        return;
+      }
+      if (order.codeUrl != null && order.codeUrl!.isNotEmpty) {
+        // 微信真实模式：App 内渲染二维码，用户用微信「扫一扫」付款。
+        if (mounted) await _showWxQrDialog(order.codeUrl!);
+      } else {
+        await _provider.launchPay(order);
+      }
 
       // 轮询后端权益状态（用户支付完成后后端才会返回 isPremium=true）。
       Entitlement e = const Entitlement(isPremium: false);
@@ -101,8 +298,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
         return '按月计费';
       case Plan.yearly:
         return '约 ¥${(plan.priceCny / 12).toStringAsFixed(1)} / 月';
-      case Plan.lifetime:
-        return '一次买断 · 永久有效';
     }
   }
 
@@ -198,7 +393,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
           ),
           const SizedBox(height: 10),
           const Center(
-            child: Text('微信 / 支付宝安全支付 · 随时可取消',
+            child: Text('微信 / 支付宝收款码支付 · 付款后凭解锁码激活',
                 style: TextStyle(fontSize: 12, color: _sub)),
           ),
           if (_msg != null) ...[

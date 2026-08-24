@@ -1,24 +1,70 @@
-# Cloudflare Workers 配置 —— 部署 lib 外的 worker.js 后端
-# 用法：
-#   1. 安装 wrangler： npm install -g wrangler   (或 npx wrangler)
-#   2. 登录：           wrangler login
-#   3. 部署：           wrangler deploy
-#   4. 注入密钥(可选)：  wrangler secret put WX_MCH_ID  /  wrangler secret put WX_API_KEY ...
+# Cloudflare Workers 配置 —— 部署 lib 外的 worker.js 后端（会员校验 + 智谱 LLM）
 #
-# 部署成功后，把得到的 *.workers.dev 地址填进前端：
-#   flutter build web --release --dart-define=PAYMENT_DEV=false \
+# 前置：
+#   1. 安装 wrangler： npm install -g wrangler   (或 npx wrangler)
+#   2. 登录：         wrangler login   （确保登录的账户就是下面 account_id 那个）
+#   3. 部署：         wrangler deploy
+#
+# 部署成功后，把得到的 *.workers.dev 地址填进前端重 build：
+#   flutter build web --release --base-href=/lingua-link/ \
+#     --dart-define=PAYMENT_DEV=false \
 #     --dart-define=PAYMENT_BACKEND=https://lingua-link-payment.<你的子域>.workers.dev
+# 然后重新发一版 CloudStudio 公网预览即可。
 
 name = "lingua-link-payment"
 main = "worker.js"
 compatibility_date = "2024-09-23"
 
-# 目前 worker.js 用内存 Map 存订单（重启即丢，仅适合联调）。
-# 要生产级持久化，建一个 KV 命名空间并取消下面注释：
-# [[kv_namespaces]]
-# binding = "ORDERS"
-# id = "在此填 wrangler kv namespace create ORDERS 返回的 id"
+# ====== 部署前必填：你的 Cloudflare Account ID ======
+# 在 dash.cloudflare.com 右侧栏「Account ID」复制过来替换下面占位。
+account_id = "43fabed1d616b8692d733fdca483f9a3"
 
-# 微信/支付宝商户号等密钥请用 wrangler secret put 注入，不要写进本文件。
-# [vars]
-#   ENV = "production"
+# ====== 非密钥配置（直接写死即可，不含任何敏感信息） ======
+[vars]
+  # 智谱 GLM 基址（注意：是 /api/paas/v4，不是 /v1）
+  LLM_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
+  # 文本润色用的模型（免费档）
+  LLM_MODEL = "glm-4-flash"
+  # 拍照 OCR 用的视觉模型（必须支持图片，glm-4-flash 不支持）
+  LLM_VISION_MODEL = "glm-4v-flash"
+  # 会员 token 有效期（天），默认 30
+  TOKEN_TTL_DAYS = "30"
+  # 关闭开发模式（开发模式会允许无 key 跑占位逻辑）
+  PAYMENT_DEV = "false"
+  # 收款模式：dev（模拟）| personal（个人收款码，免营业执照）| merchant（真实商户，需商户号）
+  PAYMENT_MODE = "personal"
+  # 个人收款码图片地址（免营业执照）。微信/支付宝「收款码」截图后自行托管，
+  # 或放进前端 web/ 目录后用相对地址（如 /lingua-link/wx_pay_qr.png）。非密钥，可写死。
+  PERSONAL_WX_QR = "pay_qr/wx.jpg"
+  PERSONAL_ALI_QR = "pay_qr/ali.jpg"
+
+# ====== 密钥（务必用 secret put 注入，绝不要写进本文件 / 不要提交到 git） ======
+# 在本机依次执行：
+#   wrangler secret put LLM_API_KEY      # 智谱 GLM 的 API Key
+#   wrangler secret put REDEEM_SECRET    # 兑换码 HMAC 签名密钥（自定一长串随机串，必须和发卡脚本一致）
+#   wrangler secret put TOKEN_SECRET     # 会员 JWT 签名密钥（另一串独立随机串）
+#
+# 注：worker.js 里 DEV_REDEEM_SECRET / DEV_TOKEN_SECRET 只是本地联调用的兜底默认值，
+#     公网部署后因为有上面的 secret，会自动覆盖 dev 默认值，所以公网不会被伪造。
+
+# ====== 持久化：订单用 KV，冷启动不丢 ======
+# 1) 建命名空间： wrangler kv namespace create ORDERS
+# 2) 把返回的 id 填到下面 id = "..."（本地 dev 可用任意占位 id + --persist 跑通）
+[[kv_namespaces]]
+binding = "ORDERS"
+id = "0c22ca15ddec4f85a36970d300013ba2"
+
+# ====== 真实收款密钥（微信/支付宝商户号，需营业执照开通） ======
+# 在本机依次执行（值从对应商户平台获取，详见下方「密钥对照」）：
+#   wrangler secret put WX_APP_ID        # 微信 AppID（公众号/小程序/App 的 appid）
+#   wrangler secret put WX_MCH_ID        # 微信支付商户号
+#   wrangler secret put WX_API_KEY       # 微信商户 API 密钥（商户平台→API安全 设置，32 位）
+#   wrangler secret put WX_NOTIFY_URL    # 微信异步通知地址： https://<你的worker>/notify
+#   wrangler secret put ALI_APP_ID       # 支付宝应用 APPID
+#   wrangler secret put ALI_PRIVATE_KEY  # 支付宝应用私钥（PKCS#8 PEM，开发者自己保留）
+#   wrangler secret put ALI_PUBLIC_KEY   # 支付宝公钥（开放平台→密钥管理 的「支付宝公钥」，RSA2）
+#   wrangler secret put ALI_NOTIFY_URL   # 支付宝异步通知地址： https://<你的worker>/notify
+#   wrangler secret put ALI_RETURN_URL   # 支付宝同步跳转地址（可填前端页或留空）
+#
+# 注：只需配置其中任一渠道即可启用该渠道真实收款；两个都配则微信/支付宝均可。
+#      未配置密钥时回落 DEV 模拟收银台（不真实扣款），方便先验证前端流程。

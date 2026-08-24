@@ -34,6 +34,7 @@ import 'dart:typed_data';
 import 'subscription_service.dart';
 import 'paywall.dart';
 import 'redeem_screen.dart';
+import 'seller_confirm.dart';
 import 'payment/payment_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -1081,7 +1082,13 @@ class _TranslatePageState extends State<TranslatePage> {
     );
     if (source == null) return;
     final picker = ImagePicker();
-    final img = await picker.pickImage(source: source, imageQuality: 85);
+    // 限制尺寸与质量：原图常 3000px+/10MB+，整张传 OCR 会拖垮上传与视觉模型推理（前端 45s 超时内拿不到回包 → 一直转圈）。
+    final img = await picker.pickImage(
+      source: source,
+      imageQuality: 80,
+      maxWidth: 1280,
+      maxHeight: 1280,
+    );
     if (img == null) return;
     final bytes = await img.readAsBytes();
     final mime = img.mimeType ?? 'image/png';
@@ -1942,6 +1949,16 @@ class _TranslatePageState extends State<TranslatePage> {
             onPressed: () async {
               await Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const PaywallScreen()),
+              );
+              if (mounted) setState(() {});
+            },
+          ),
+          IconButton(
+            tooltip: '卖家确认',
+            icon: const Icon(Icons.storefront_outlined, color: Color(0xFF5D6CFF)),
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const SellerConfirmScreen()),
               );
               if (mounted) setState(() {});
             },

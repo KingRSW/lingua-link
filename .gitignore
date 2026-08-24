@@ -1,109 +1,49 @@
-# Miscellaneous
-*.class
-*.log
-*.pyc
-*.swp
-.DS_Store
-.atom/
-.build/
-.buildlog/
-.history
-.svn/
-.swiftpm/
-migrate_working_dir/
-
-# IntelliJ related
-*.iml
-*.ipr
-*.iws
-.idea/
-
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
-
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
-.dart_tool/
-.flutter-plugins-dependencies
-.pub-cache/
-.pub/
-/build/
-/coverage/
-
-# Symbolication related
-app.*.symbols
-
-# Obfuscation related
-app.*.map.json
-
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
-
-# Signing keys and properties
-/key.properties
-**/key.properties
+# ===== 密钥 / 签名材料（绝不入库） =====
+.dev.vars
 *.jks
-
-# Local build artifacts (debug IPAs, APKs, logs) — not for version control
-/build_output/
-build_output.log
-
-# ============ Platform build caches (keep repo lean / avoid GB commits) ============
-
-# Android
-android/app/build/
-android/.gradle/
-android/captures/
-android/local.properties
-**/android/**/build/
-*.apk
-*.aar
-
-# iOS / Xcode
-ios/build/
-ios/dmg_temp/
-ios/Runner.xcworkspace/
-ios/.symlinks/
-ios/Pods/
-ios/Flutter/Flutter.framework/
-ios/Flutter/Flutter.podspec
-ios/Flutter/Generated.xcconfig
-**/ios/**/xcworkspace
-**/ios/**/xcuserdata
-**/ios/**/*.ipa
-**/ios/**/*.zip
-**/ios/**/*.dSYM
-**/ios/**/*.dSYM.zip
-
-# macOS
-macos/Flutter/Flutter.framework/
-macos/Pods/
-macos/Runner.xcworkspace/
-macos/build/
-
-# Linux / Windows build outputs
-linux/build/
-windows/build/
-
-# Local scratch / leftover dirs (not part of the app)
-temp_check/
-temp_ipa_check/
-test/
-（翻译软件安装包）/
-
-# Signing credentials / private keys (NEVER commit to a public repo)
 *.key
 *.csr
 *.p12
-*.pfx
 *.mobileprovision
 
-# Cloudflare Workers 本地密钥 / 运行态（含 LLM_API_KEY，切勿提交）
-.dev.vars
-.wrangler/
+# ===== Supabase 临时文件 / 密钥 =====
+supabase/.temp/
+supabase/ANON_KEY.txt
+supabase/CONFIRM_SECRET.txt
 
+# ===== 出包二进制（走 GitHub Releases） =====
+dist/
+*.ipa
+*.dmg
+*.exe
+*.apk
+package.log
+.resign_last
+
+# ===== 构建缓存 / 杂项 =====
+.wrangler/
+temp_ipa_check/
+build_output/
+ios/dmg_temp/
+ios/translate_app.zip
+*.log
+*.iml
+*.bak
+
+# ===== 误拷入项目的桌面文件夹（含已编译 .app） =====
+（翻译软件安装包）/
+
+# ===== Flutter / Dart =====
+.dart_tool/
+build/
+**/*.g.dart
+.flutter-plugins
+.flutter-plugins-dependencies
+ios/Flutter/ephemeral/
+macos/Flutter/ephemeral/
+
+# ===== OS / 编辑器 =====
+.DS_Store
+*.swp
+.vscode/
+.idea/

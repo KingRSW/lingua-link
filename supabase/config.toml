@@ -1,0 +1,7 @@
+# Supabase 项目配置（Edge Function 部署用）
+# project_id 仅作本地链接提示；真正部署时以 --project-ref 参数为准。
+project_id = "lingua-link"
+
+[functions.lingua-payment]
+# 前端/手机快捷指令调用本函数时不带 Supabase JWT，必须关闭校验。
+verify_jwt = false

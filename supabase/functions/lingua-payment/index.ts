@@ -1,112 +1,155 @@
 /**
- * LinguaLink 会员支付后端（Cloudflare Workers）
+ * LinguaLink 会员支付后端（Supabase Edge Function · Deno）
  * ---------------------------------------------------------------
- * 部署：wrangler deploy（需先 `npm i -g wrangler` 并登录）
+ * 由 Cloudflare Workers 版 worker.js 改写而来：
+ *   - 订单存储：KV  →  Postgres（public.orders 表，PostgREST 读写）
+ *   - 环境变量：wrangler secret  →  Deno.env.get（supabase secrets set 注入）
+ *   - 运行时：Workers  →  Deno（Web Crypto / btoa / atob 均原生支持）
  *
- * 两种运行模式：
- *   ┌──────────┬──────────────────────────────────────────────────────┐
- *   │ DEV      │ 下单返回内置模拟收银台，点「模拟支付成功」即可走完流程。 │
- *   │ (默认)   │ 不接真实微信/支付宝，方便先验证前端交互。              │
- *   ├──────────┼──────────────────────────────────────────────────────┤
- *   │ REAL     │ 调真实微信支付 v2 / 支付宝电脑网站支付，密钥只在后端。 │
- *   │          │ 触发条件：配置了商户号 env 且 PAYMENT_DEV !== 'true'。 │
- *   └──────────┴──────────────────────────────────────────────────────┘
+ * Supabase 会自动把 SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 注入函数环境，
+ * 我们用 service_role 钥匙读写 orders 表（绕过 RLS）。
  *
- * ⚠️ 真实模式代码已按微信 v2 / 支付宝 RSA2 的公开规范实现签名与回调验签，
- *    但仍需你填入真实商户号密钥（wrangler secret）后用沙箱 / 小额订单实测每一笔
- *    支付与回调验签，确认无误再对客开放。
+ * 两种运行模式（与前端 lib/payment/models.dart 对齐）：
+ *   PAYMENT_MODE=personal：个人收款码模式（免营业执照），下单返双码+订单号，
+ *                          卖家在微信/支付宝看到到账后，用手机快捷指令调
+ *                          /confirm-paid 按金额自动确认 → 标 paid → 用户端轮询开通。
+ *   PAYMENT_MODE=real   ：真实微信/支付宝商户模式（需配置商户号密钥）。
  *
- * 生产注意：
- *   - 订单状态已改用 KV（ORDERS 绑定），冷启动不丢；未绑定 KV 时回落内存 Map。
- *   - 异步通知已校验签名且核对金额（微信 HMAC-SHA256、支付宝 RSA2），并核对 app_id /
- *     out_trade_no / 金额，防止伪造「支付成功」。
+ * 部署：supabase functions deploy lingua-payment --project-ref <ref>
+ * 鉴权：config.toml 设 verify_jwt=false（前端/手机不带 Supabase JWT）。
  */
 
-// 套餐价格（与前端 lib/payment/models.dart 对齐；正式以商户平台配置为准）
-const PLANS = {
+// ============================================================
+// 套餐价格（与前端对齐；正式以商户平台配置为准）
+// ============================================================
+const PLANS: Record<string, { label: string; priceCny: number; days: number | null }> = {
   monthly: { label: '按月会员', priceCny: 1.0, days: 30 },
-  yearly: { label: '按年会员', priceCny: 24.0, days: 365 },
+  yearly: { label: '按年会员', priceCny: 10.0, days: 365 },
 };
 
-// 订单持久化：生产用 KV（冷启动不丢）；未绑定 KV 时回落内存 Map（仅本地/演示）。
-const memOrders = new Map();
-async function getOrder(env, id) {
-  if (env && env.ORDERS) {
-    try {
-      const o = await env.ORDERS.get(id, { type: 'json' });
-      if (o) return o;
-    } catch { /* KV 未绑定则用内存 */ }
-  }
-  return memOrders.get(id) || null;
+// ============================================================
+// 环境变量（Deno.env.get）
+// ============================================================
+// 任意属性访问都落到 Deno.env.get，等价于原 worker 的 env 对象。
+const env: Record<string, string | undefined> = new Proxy(
+  {},
+  { get: (_t, p: string | symbol) => Deno.env.get(String(p)) },
+) as Record<string, string | undefined>;
+
+// ============================================================
+// PostgREST 数据访问（orders 表）
+// ============================================================
+const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+const SB_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+async function sbReq(method: string, path: string, body?: unknown, extra?: Record<string, string>) {
+  const headers: Record<string, string> = {
+    apikey: SB_KEY,
+    Authorization: `Bearer ${SB_KEY}`,
+    'content-type': 'application/json',
+    ...(extra || {}),
+  };
+  const res = await fetch(`${SB_URL}/rest/v1/${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return res;
 }
-async function putOrder(env, order) {
-  if (env && env.ORDERS) {
-    try {
-      await env.ORDERS.put(order.orderId, JSON.stringify(order));
-      return;
-    } catch { /* 回落内存 */ }
-  }
-  memOrders.set(order.orderId, order);
+
+async function getOrder(_e: unknown, id: string): Promise<any | null> {
+  const res = await sbReq('GET', `orders?order_id=eq.${encodeURIComponent(id)}&select=payload`);
+  if (!res.ok) return null;
+  const rows = await res.json();
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  return rows[0].payload;
 }
-async function markPaid(env, orderId) {
-  const order = await getOrder(env, orderId);
+
+async function putOrder(_e: unknown, order: any): Promise<void> {
+  await sbReq(
+    'POST',
+    'orders?on_conflict=order_id',
+    {
+      order_id: order.orderId,
+      status: order.status || 'pending',
+      mode: order.mode || 'personal',
+      created_at: order.createdAt,
+      paid_at: order.paidAt ?? null,
+      payload: order,
+    },
+    { Prefer: 'resolution=merge-duplicates' },
+  );
+}
+
+async function markPaid(_e: unknown, orderId: string): Promise<boolean> {
+  const order = await getOrder(_e, orderId);
   if (!order) return false;
   order.status = 'paid';
   order.paidAt = Date.now();
-  await putOrder(env, order);
+  await putOrder(_e, order);
   return true;
 }
-// 金额换算：微信按「分」、支付宝按「元(2 位小数)」
-const planCents = (plan) => Math.round(plan.priceCny * 100);
-const planYuan = (plan) => plan.priceCny.toFixed(2);
+
+async function findPendingByAmount(_e: unknown, amountCny: number): Promise<any | null> {
+  const res = await sbReq('GET', 'orders?status=eq.pending&mode=eq.personal&select=payload');
+  if (!res.ok) return null;
+  const rows = await res.json();
+  const hit = (Array.isArray(rows) ? rows : [])
+    .map((r: any) => r.payload)
+    .filter((o: any) => o && o.status === 'pending' && o.mode === 'personal')
+    .filter((o: any) => {
+      const p = PLANS[o.plan];
+      return p && Math.abs((p.priceCny || 0) - amountCny) < 0.01;
+    });
+  if (hit.length === 0) return null;
+  hit.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+  return hit[0];
+}
 
 // ============================================================
 // 工具：编码 / 签名
 // ============================================================
-function bytesToHex(buf) {
+function bytesToHex(buf: ArrayBuffer): string {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
-function randStr(n = 16) {
+function randStr(n = 16): string {
   const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   let s = '';
   for (let i = 0; i < n; i++) s += c[Math.floor(Math.random() * c.length)];
   return s;
 }
-function nonce() {
+function nonce(): string {
   return randStr(32);
 }
 
-// HMAC-SHA256（微信支付 v2 的 sign_type=HMAC-SHA256 用）
-async function hmacSha256Hex(message, key) {
+async function hmacSha256Hex(message: string, key: string): Promise<string> {
   const keyBuf = new TextEncoder().encode(key);
   const cryptoKey = await crypto.subtle.importKey(
-    'raw', keyBuf, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+    'raw', keyBuf, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   );
   const sig = await crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(message));
   return bytesToHex(sig).toUpperCase();
 }
 
-// RSA2 签名（支付宝用，私钥为 PKCS#8 PEM）
-async function rsa2Sign(message, pkcs8Pem) {
+async function rsa2Sign(message: string, pkcs8Pem: string): Promise<string> {
   const pem = pkcs8Pem.replace(/-----\w+ PRIVATE KEY-----/g, '').replace(/\s+/g, '');
   const der = Uint8Array.from(atob(pem), (c) => c.charCodeAt(0));
   const key = await crypto.subtle.importKey(
-    'pkcs8', der, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']
+    'pkcs8', der, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign'],
   );
   const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(message));
   return btoa(String.fromCharCode(...new Uint8Array(sig)));
 }
 
-// 微信 v2 签名串：参数按 key 升序，非空，key=value&... 再拼 &key=API_KEY
-async function wxSign(params, apiKey) {
-  const keys = Object.keys(params).filter((k) => k !== 'sign' && params[k] !== '' && params[k] != null)
+async function wxSign(params: Record<string, any>, apiKey: string): Promise<string> {
+  const keys = Object.keys(params)
+    .filter((k) => k !== 'sign' && params[k] !== '' && params[k] != null)
     .sort();
   const raw = keys.map((k) => `${k}=${params[k]}`).join('&') + `&key=${apiKey}`;
   return hmacSha256Hex(raw, apiKey);
 }
 
-// 把对象拼成支付宝签名串（排除 sign/空值，按 key 升序，k=v&...）
-function aliSignContent(params) {
+function aliSignContent(params: Record<string, any>): string {
   return Object.keys(params)
     .filter((k) => k !== 'sign' && params[k] !== '' && params[k] != null)
     .sort()
@@ -114,94 +157,80 @@ function aliSignContent(params) {
     .join('&');
 }
 
-// RSA2 验签（支付宝回调用，公钥为「支付宝公钥」PKCS#8 PEM，切勿用应用公钥）
-async function rsa2Verify(message, signatureB64, spkiPem) {
+async function rsa2Verify(message: string, signatureB64: string, spkiPem: string): Promise<boolean> {
   const pem = spkiPem.replace(/-----\w+ PUBLIC KEY-----/g, '').replace(/\s+/g, '');
   const der = Uint8Array.from(atob(pem), (c) => c.charCodeAt(0));
   const key = await crypto.subtle.importKey(
-    'spki', der, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']
+    'spki', der, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify'],
   );
   const sig = Uint8Array.from(atob(signatureB64), (c) => c.charCodeAt(0));
   return crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, sig, new TextEncoder().encode(message));
 }
 
-// 极简 XML 解析：取 <tag>值</tag> 或 <tag><![CDATA[值]]></tag>
-function parseWxXml(xml) {
-  const out = {};
+function parseWxXml(xml: string): Record<string, string> {
+  const out: Record<string, string> = {};
   const re = /<(\w+)>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([^<]*))<\/\1>/g;
-  let m;
+  let m: RegExpExecArray | null;
   while ((m = re.exec(xml)) !== null) out[m[1]] = m[2] !== undefined ? m[2] : m[3];
   return out;
 }
-function wxXmlResp(returnCode) {
+function wxXmlResp(returnCode: string): string {
   return `<xml><return_code><![CDATA[${returnCode}]]></return_code></xml>`;
 }
 
-// 跨域头（前端 Pages 站点跨域调用本 worker 需要）
-const corsHeaders = {
+const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-  'Access-Control-Allow-Headers': 'content-type, authorization, x-membership-token',
+  'Access-Control-Allow-Headers': 'content-type, authorization, apikey, x-membership-token, x-confirm-secret',
 };
 
-function json(data, status = 200) {
+function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8', ...corsHeaders },
   });
 }
 
-function genOrderId() {
+function genOrderId(): string {
   return 'LL-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
 }
-
-function expireAtFor(planId) {
+function expireAtFor(planId: string): string | null {
   const p = PLANS[planId];
   if (!p || p.days == null) return null;
   return new Date(Date.now() + p.days * 86400 * 1000).toISOString();
 }
 
 // ============================================================
-// 会员凭证与兑换码（防白嫖）
+// 会员凭证与兑换码
 // ============================================================
-// 设计：
-//  - 兑换码在服务端用 REDEEM_SECRET 做 HMAC 签名，客户端无法自行伪造（旧版
-//    纯前端校验和算法可被逆向，已废弃）。发行脚本见 tools/gen_redeem.mjs。
-//  - 兑换成功后服务端签发 HS256 membership token（含 sub/exp），前端随
-//    /ai-polish、/ocr 请求带上；后端校验签名+有效期，否则返回 401。
-//  - 限频：按 token(sub) 内存滑动窗口（免费层够用；多实例生产请改 KV）。
-//  - 未配置密钥时回落 DEV 默认值（仅本地/演示，上线务必设 wrangler secret）。
-
 const DEV_REDEEM_SECRET = 'lingua-dev-redeem-2026';
 const DEV_TOKEN_SECRET = 'lingua-dev-token-2026';
-const RATE_LIMIT = 30; // 每个滑动窗口允许的最大请求数
-const RATE_WINDOW = 60; // 滑动窗口长度（秒）
+const RATE_LIMIT = 30;
+const RATE_WINDOW = 60;
+const rateBuckets = new Map<string, { window: number; count: number }>();
 
-const rateBuckets = new Map(); // key: 'rate:<sub>' -> { window, count }
-
-function b64urlEncode(str) {
+function b64urlEncode(str: string): string {
   return btoa(unescape(encodeURIComponent(str)))
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
-function b64urlEncodeBytes(buf) {
+function b64urlEncodeBytes(buf: ArrayBuffer): string {
   let s = '';
   const bytes = new Uint8Array(buf);
   for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
-function b64urlDecode(str) {
+function b64urlDecode(str: string): string {
   str = str.replace(/-/g, '+').replace(/_/g, '/');
   const bin = atob(str);
   return decodeURIComponent(escape(bin));
 }
-async function hmacSign(message, key) {
+async function hmacSign(message: string, key: string): Promise<ArrayBuffer> {
   const cryptoKey = await crypto.subtle.importKey(
     'raw', new TextEncoder().encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   );
   return crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(message));
 }
-// RFC4648 Base32（与发行脚本 tools/gen_redeem.mjs 一致）
-function base32(buf) {
+function base32(buf: ArrayBuffer): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
   const bytes = new Uint8Array(buf);
   let bits = 0, value = 0, out = '';
@@ -216,30 +245,25 @@ function base32(buf) {
   if (bits > 0) out += alphabet[(value << (5 - bits)) & 31];
   return out;
 }
-
-// 兑换码末段 = HMAC-SHA256("LINGUA-<MIDDLE>", REDEEM_SECRET) 的 base32 前 6 位
-async function redeemSig(middle, secret) {
+async function redeemSig(middle: string, secret: string): Promise<string> {
   const sig = await hmacSign('LINGUA-' + middle, secret);
   return base32(sig).slice(0, 6);
 }
-
-function tokenTtlSec(env) {
+function tokenTtlSec(): number {
   const d = parseInt(env.TOKEN_TTL_DAYS || '30', 10);
   return (isNaN(d) ? 30 : d) * 86400;
 }
-
-async function signToken(sub, env) {
+async function signToken(sub: string): Promise<string> {
   const secret = env.TOKEN_SECRET || DEV_TOKEN_SECRET;
   const header = { alg: 'HS256', typ: 'JWT' };
   const now = Math.floor(Date.now() / 1000);
-  const payload = { sub, iat: now, exp: now + tokenTtlSec(env) };
+  const payload = { sub, iat: now, exp: now + tokenTtlSec() };
   const h = b64urlEncode(JSON.stringify(header));
   const p = b64urlEncode(JSON.stringify(payload));
   const sig = await hmacSign(`${h}.${p}`, secret);
   return `${h}.${p}.${b64urlEncodeBytes(sig)}`;
 }
-
-async function verifyToken(token, env) {
+async function verifyToken(token: string | null): Promise<any | null> {
   if (!token || typeof token !== 'string') return null;
   const parts = token.split('.');
   if (parts.length !== 3) return null;
@@ -260,14 +284,12 @@ async function verifyToken(token, env) {
     return null;
   }
 }
-
-function bearerToken(request) {
+function bearerToken(request: Request): string {
   const auth = request.headers.get('authorization') || '';
   if (auth.toLowerCase().startsWith('bearer ')) return auth.slice(7).trim();
   return request.headers.get('x-membership-token') || '';
 }
-
-function rateLimited(key) {
+function rateLimited(key: string): boolean {
   const now = Math.floor(Date.now() / 1000);
   const b = rateBuckets.get(key);
   if (!b || now - b.window >= RATE_WINDOW) {
@@ -277,10 +299,8 @@ function rateLimited(key) {
   b.count += 1;
   return b.count > RATE_LIMIT;
 }
-
-// PRO 权益接口前置校验：校验会员 token + 限频。返回 null 表示通过，否则是错误响应。
-async function requireMember(request, env) {
-  const payload = await verifyToken(bearerToken(request), env);
+async function requireMember(request: Request): Promise<Response | null> {
+  const payload = await verifyToken(bearerToken(request));
   if (!payload) {
     return json({ error: 'unauthorized', code: 'no_membership',
       message: '需要有效的会员凭证（请先在 App 内用兑换码解锁）' }, 401);
@@ -291,9 +311,8 @@ async function requireMember(request, env) {
   return null;
 }
 
-// /redeem：校验兑换码，成功则签发 membership token
-async function redeem(request, env) {
-  let body;
+async function redeem(request: Request): Promise<Response> {
+  let body: any;
   try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400); }
   const code = ((body.code || '') + '').trim().toUpperCase();
   const parts = code.split('-');
@@ -306,33 +325,33 @@ async function redeem(request, env) {
   if ((await redeemSig(middle, secret)) !== given) {
     return json({ error: 'invalid_code', message: '兑换码无效或已被伪造' }, 400);
   }
-  const token = await signToken(middle, env);
+  const token = await signToken(middle);
   return json({
     ok: true,
     token,
     isPremium: true,
     source: 'redeem',
-    expireAt: new Date(Date.now() + tokenTtlSec(env) * 1000).toISOString(),
+    expireAt: new Date(Date.now() + tokenTtlSec() * 1000).toISOString(),
   });
 }
 
 // ============================================================
 // 真实模式：微信支付 v2 统一下单
 // ============================================================
-async function wxUnifiedOrder(orderId, plan, env, clientIp) {
-  const params = {
+async function wxUnifiedOrder(orderId: string, plan: any, clientIp: string): Promise<{ codeUrl?: string }> {
+  const params: Record<string, any> = {
     appid: env.WX_APP_ID,
     mch_id: env.WX_MCH_ID,
     nonce_str: nonce(),
     body: `LinguaLink-${plan.label}`,
     out_trade_no: orderId,
-    total_fee: Math.round(plan.priceCny * 100), // 单位：分
+    total_fee: Math.round(plan.priceCny * 100),
     spbill_create_ip: clientIp,
     notify_url: env.WX_NOTIFY_URL,
-    trade_type: 'NATIVE', // NATIVE=扫码；H5 站点用 'MWEB'
+    trade_type: 'NATIVE',
     sign_type: 'HMAC-SHA256',
   };
-  params.sign = await wxSign(params, env.WX_API_KEY);
+  params.sign = await wxSign(params, env.WX_API_KEY || '');
   const xml = `<xml>${Object.keys(params).map((k) => `<${k}>${params[k]}</${k}>`).join('')}</xml>`;
   const resp = await fetch('https://api.mch.weixin.qq.com/pay/unifiedorder', {
     method: 'POST',
@@ -340,22 +359,18 @@ async function wxUnifiedOrder(orderId, plan, env, clientIp) {
     body: xml,
   });
   const txt = await resp.text();
-  // TODO(联调): 解析 <return_code>/<result_code>/<code_url>，失败要打日志。
   const codeUrl = (txt.match(/<code_url>(?:<!\[CDATA\[)?([^<]+)/) || [])[1];
   return { codeUrl };
 }
 
-// ============================================================
-// 真实模式：支付宝 电脑网站支付（自动提交表单）
-// ============================================================
-async function aliPagePay(orderId, plan, env) {
+async function aliPagePay(orderId: string, plan: any): Promise<{ form: string; qs: string }> {
   const bizContent = JSON.stringify({
     out_trade_no: orderId,
     product_code: 'FAST_INSTANT_TRADE_PAY',
-    total_amount: plan.priceCny.toFixed(2), // 单位：元
+    total_amount: plan.priceCny.toFixed(2),
     subject: `LinguaLink-${plan.label}`,
   });
-  const params = {
+  const params: Record<string, any> = {
     app_id: env.ALI_APP_ID,
     method: 'alipay.trade.page.pay',
     format: 'JSON',
@@ -367,7 +382,7 @@ async function aliPagePay(orderId, plan, env) {
     return_url: env.ALI_RETURN_URL || '',
     biz_content: bizContent,
   };
-  params.sign = await rsa2Sign(aliSignContent(params), env.ALI_PRIVATE_KEY);
+  params.sign = await rsa2Sign(aliSignContent(params), env.ALI_PRIVATE_KEY || '');
   const qs = Object.keys(params).map((k) => `${k}=${encodeURIComponent(params[k])}`).join('&');
   const form = `<!doctype html><html><head><meta charset="utf-8"></head><body>
     <form id="f" action="https://openapi.alipay.com/gateway.do" method="get">
@@ -377,25 +392,58 @@ async function aliPagePay(orderId, plan, env) {
 }
 
 // ============================================================
+// 0.5) 新订单通知（卖家侧，渠道可配置，无需 Apple 付费推送）
+// ============================================================
+async function notifySeller(order: any): Promise<void> {
+  const url = env.SELLER_NOTIFY_URL;
+  if (!url) return; // 未配置则静默跳过，不影响下单
+  const title = 'LinguaLink 新订单';
+  const body = `${order.label} ¥${order.priceCny} 待确认（${order.orderId}）`;
+  try {
+    if (url.includes('api.day.app')) {
+      // Bark: GET https://api.day.app/<key>/<title>/<body>
+      await fetch(`${url}/${encodeURIComponent(title)}/${encodeURIComponent(body)}`);
+    } else if (url.includes('api.telegram.org')) {
+      // Telegram Bot API: <base>?chat_id=...&text=...
+      await fetch(`${url}&text=${encodeURIComponent(body)}`);
+    } else if (url.includes('pushplus')) {
+      // 推送加：POST https://www.pushplus.plus/send {token,title,content}，token 从配置 URL 的 ?token= 取
+      const token = new URL(url).searchParams.get('token') || '';
+      await fetch('https://www.pushplus.plus/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token, title, content: body }),
+      });
+    } else {
+      // 通用 POST JSON（pushplus / 企业微信 / 自建等）
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title, body, orderId: order.orderId, plan: order.plan, priceCny: order.priceCny }),
+      });
+    }
+  } catch (e) {
+    console.error('notifySeller failed:', e);
+  }
+}
+
+// ============================================================
 // 1) 下单
 // ============================================================
-async function createOrder(request, env) {
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return json({ error: 'bad json' }, 400);
-  }
+async function createOrder(request: Request): Promise<Response> {
+  let body: any;
+  try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400); }
   const planId = body.plan;
-  const channel = body.channel || 'wechat'; // wechat | alipay
+  const channel = body.channel || 'wechat';
   const plan = PLANS[planId];
   if (!plan) return json({ error: 'unknown plan' }, 400);
 
-  // 个人收款码模式（免营业执照）：直接返回收款码，不开商户订单；会员激活走解锁码。
+  // 个人收款码模式（免营业执照）
   if ((env.PAYMENT_MODE || 'dev') === 'personal') {
-    // 个人收款码模式也生成订单号，便于收款方确认后关联到具体用户、用户端轮询自动开通。
     const orderId = genOrderId();
-    await putOrder(env, { orderId, plan: planId, mode: 'personal', status: 'pending', createdAt: Date.now() });
+    const order = { orderId, plan: planId, mode: 'personal', status: 'pending', createdAt: Date.now(), priceCny: plan.priceCny, label: plan.label };
+    await putOrder(env, order);
+    await notifySeller(order); // 有新订单即推送提醒给卖家
     return json({
       orderId,
       mode: 'personal',
@@ -408,16 +456,15 @@ async function createOrder(request, env) {
   }
 
   const orderId = genOrderId();
-  const order = { orderId, plan: planId, channel, status: 'pending', createdAt: Date.now() };
+  const order: any = { orderId, plan: planId, channel, status: 'pending', createdAt: Date.now() };
   await putOrder(env, order);
 
   const origin = new URL(request.url).origin;
 
-  // 微信真实模式：统一下单拿到 code_url，前端/收银台页渲染二维码供扫码。
-  if (wxConfigured(env) && channel === 'wechat') {
+  if (wxConfigured() && channel === 'wechat') {
     try {
-      const clientIp = request.headers.get('CF-Connecting-IP') || '127.0.0.1';
-      const { codeUrl } = await wxUnifiedOrder(orderId, plan, env, clientIp);
+      const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || '127.0.0.1';
+      const { codeUrl } = await wxUnifiedOrder(orderId, plan, clientIp);
       if (!codeUrl) return json({ error: 'wx_no_code_url' }, 502);
       order.codeUrl = codeUrl;
       await putOrder(env, order);
@@ -426,11 +473,9 @@ async function createOrder(request, env) {
       return json({ error: 'upstream_payment_failed', detail: String(e) }, 502);
     }
   }
-
-  // 支付宝真实模式：拿到自动提交表单，收银台页直接吐出跳转。
-  if (aliConfigured(env) && channel === 'alipay') {
+  if (aliConfigured() && channel === 'alipay') {
     try {
-      const { form } = await aliPagePay(orderId, plan, env);
+      const { form } = await aliPagePay(orderId, plan);
       order.payForm = form;
       await putOrder(env, order);
       return json({ orderId, channel: 'alipay', payUrl: `${origin}/pay?orderId=${orderId}&channel=alipay` });
@@ -438,30 +483,31 @@ async function createOrder(request, env) {
       return json({ error: 'upstream_payment_failed', detail: String(e) }, 502);
     }
   }
-
   // DEV 模式：内置模拟收银台
   const payUrl = `${origin}/pay?orderId=${orderId}`;
   return json({ orderId, channel: 'dev', payUrl });
 }
 
-function wxConfigured(env) {
+function wxConfigured(): boolean {
   return env.PAYMENT_DEV !== 'true' && !!env.WX_APP_ID && !!env.WX_MCH_ID && !!env.WX_API_KEY;
 }
-function aliConfigured(env) {
+function aliConfigured(): boolean {
   return env.PAYMENT_DEV !== 'true' && !!env.ALI_APP_ID && !!env.ALI_PRIVATE_KEY;
 }
-function isRealMode(env) {
-  return wxConfigured(env) || aliConfigured(env);
+function isRealMode(): boolean {
+  return wxConfigured() || aliConfigured();
 }
 
 // ============================================================
 // 2) 收银台页（DEV 模拟 / 真实扫码）
 // ============================================================
-async function payPage(orderId, channel, env) {
+async function payPage(orderId: string | null, channel: string): Promise<Response> {
+  if (!orderId) return new Response('缺少 orderId', { status: 400 });
   const order = await getOrder(env, orderId);
   if (!order) return new Response('订单不存在', { status: 404 });
   const plan = PLANS[order.plan];
-  const isReal = isRealMode(env);
+  if (!plan) return new Response('未知套餐', { status: 404 });
+  const isReal = isRealMode();
 
   if (isReal && channel === 'wechat') {
     const codeUrl = order.codeUrl || '';
@@ -479,13 +525,10 @@ async function payPage(orderId, channel, env) {
     return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
   }
   if (isReal && channel === 'alipay') {
-    // 支付宝返回的是自动提交表单，直接吐出（浏览器会自动跳转收银台）。
     return new Response(order.payForm || '<p>未获取到支付宝表单，请重试下单。</p>', {
       headers: { 'content-type': 'text/html; charset=utf-8' },
     });
   }
-
-  // DEV 模拟收银台
   const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>支付 - LinguaLink</title>
@@ -503,10 +546,10 @@ async function payPage(orderId, channel, env) {
   <script>
   function pay(c){ alert('真实模式下将跳转到'+c+'收银台（需配置商户号）'); }
   async function devConfirm(){
-    await fetch('/notify',{method:'POST',headers:{'content-type':'application/json'},
+    await fetch('./notify',{method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({orderId:'${orderId}'})});
     alert('支付成功！可返回 App 查看会员状态。');
-    location.href='/entitlement?orderId=${orderId}&done=1';
+    location.href='./entitlement?orderId=${orderId}&done=1';
   }
   </script></body></html>`;
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
@@ -515,117 +558,70 @@ async function payPage(orderId, channel, env) {
 // ============================================================
 // 3) 异步通知（真实为微信/支付宝回调）
 // ============================================================
-async function notify(request, env) {
+async function notify(request: Request): Promise<Response> {
   const ct = (request.headers.get('content-type') || '').toLowerCase();
-  if (ct.includes('xml')) return wxNotify(request, env);          // 微信：application/xml
-  if (ct.includes('form') || ct.includes('urlencoded')) return aliNotify(request, env); // 支付宝
+  if (ct.includes('xml')) return wxNotify(request);
+  if (ct.includes('form') || ct.includes('urlencoded')) return aliNotify(request);
 
-  // DEV 模式：模拟收银台以 JSON 上报 orderId，直接标记（仅本地联调）。
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return json({ error: 'bad json' }, 400);
-  }
+  let body: any;
+  try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400); }
   const order = await getOrder(env, body.orderId);
   if (!order) return json({ error: 'unknown order' }, 404);
   await markPaid(env, body.orderId);
   return json({ ok: true });
 }
-
-// 微信支付异步通知：XML + HMAC-SHA256 验签
-async function wxNotify(request, env) {
-  if (!wxConfigured(env)) return new Response(wxXmlResp('FAIL'), { headers: { 'content-type': 'text/xml' } });
+async function wxNotify(request: Request): Promise<Response> {
+  if (!wxConfigured()) return new Response(wxXmlResp('FAIL'), { headers: { 'content-type': 'text/xml' } });
   const xml = await request.text();
   const p = parseWxXml(xml);
   if ((p.return_code || '') !== 'SUCCESS' || (p.result_code || '') !== 'SUCCESS') {
     return new Response(wxXmlResp('FAIL'), { headers: { 'content-type': 'text/xml' } });
   }
-  // 验签：对所有非空字段（除 sign）按 key 升序拼 k=v&...&key=API_KEY，重算 HMAC-SHA256。
   const signSrc = Object.keys(p).filter((k) => k !== 'sign' && p[k] !== '' && p[k] != null)
     .sort().map((k) => `${k}=${p[k]}`).join('&') + `&key=${env.WX_API_KEY}`;
-  const calc = (await hmacSha256Hex(signSrc, env.WX_API_KEY)).toUpperCase();
+  const calc = (await hmacSha256Hex(signSrc, env.WX_API_KEY || '')).toUpperCase();
   if (calc !== (p.sign || '').toUpperCase()) {
     return new Response(wxXmlResp('FAIL'), { headers: { 'content-type': 'text/xml' } });
   }
   const order = await getOrder(env, p.out_trade_no);
   if (!order) return new Response(wxXmlResp('FAIL'), { headers: { 'content-type': 'text/xml' } });
-  // 金额核对：防止伪造金额
-  if (parseInt(p.total_fee || '0', 10) !== planCents(PLANS[order.plan])) {
+  if (parseInt(p.total_fee || '0', 10) !== Math.round((PLANS[order.plan]?.priceCny || 0) * 100)) {
     return new Response(wxXmlResp('FAIL'), { headers: { 'content-type': 'text/xml' } });
   }
   await markPaid(env, p.out_trade_no);
   return new Response(wxXmlResp('SUCCESS'), { headers: { 'content-type': 'text/xml' } });
 }
-
-// 支付宝异步通知：form-urlencoded + RSA2 验签
-async function aliNotify(request, env) {
-  if (!aliConfigured(env)) return new Response('failure');
+async function aliNotify(request: Request): Promise<Response> {
+  if (!aliConfigured()) return new Response('failure');
   const text = await request.text();
-  const p = Object.fromEntries(new URLSearchParams(text));
+  const p: Record<string, string> = Object.fromEntries(new URLSearchParams(text));
   if ((p.trade_status || '') !== 'TRADE_SUCCESS' && (p.trade_status || '') !== 'TRADE_FINISHED') {
     return new Response('failure');
   }
-  // 验签：排除 sign/sign_type，按 key 升序拼 k=v&...，用支付宝公钥验 RSA2。
   const signSrc = Object.keys(p).filter((k) => k !== 'sign' && k !== 'sign_type' && p[k] !== '' && p[k] != null)
     .sort().map((k) => `${k}=${p[k]}`).join('&');
   const ok = await rsa2Verify(signSrc, p.sign || '', env.ALI_PUBLIC_KEY || '');
   if (!ok) return new Response('failure');
-  if (p.app_id !== env.ALI_APP_ID) return new Response('failure'); // app_id 一致性
+  if (p.app_id !== env.ALI_APP_ID) return new Response('failure');
   const order = await getOrder(env, p.out_trade_no);
   if (!order) return new Response('failure');
-  if ((p.total_amount || '') !== planYuan(PLANS[order.plan])) return new Response('failure'); // 金额核对
+  if ((p.total_amount || '') !== (PLANS[order.plan]?.priceCny || 0).toFixed(2)) return new Response('failure');
   await markPaid(env, p.out_trade_no);
-  // 支付宝要求响应体为纯文本 success（HTTP 200）
   return new Response('success');
 }
 
 // ============================================================
-// 4) 查询权益
+// 4) 确认付款（个人收款码模式，卖家侧）
 // ============================================================
-// 个人收款码模式：收款方（你）在微信/支付宝看到到账后确认收款。
-// 支持两种确认方式：
-//   - 传 orderId：精确确认某笔订单（最稳，用户把订单号发你）。
-//   - 传 amountCny：按金额自动匹配最近一个金额相符的待付订单（配合手机收款通知监听，
-//     脚本解析出金额即可自动确认，无需订单号）。短时间多个同套餐待付订单会命中最新一个。
-// 需 CONFIRM_SECRET（仅你本机/命令行持有，绝不下发前端），避免用户自己调接口白嫖开通。
-async function findPendingByAmount(env, amountCny) {
-  const hit = [];
-  const consider = (o) => {
-    if (o && o.status === 'pending' && o.mode === 'personal') {
-      const p = PLANS[o.plan];
-      if (p && Math.abs((p.priceCny || 0) - amountCny) < 0.01) hit.push(o);
-    }
-  };
-  // 内存（无 KV 时）+ KV（wrangler.toml 绑了 ORDERS 时走这里），两条存储路径都查。
-  for (const o of memOrders.values()) consider(o);
-  if (env && env.ORDERS) {
-    try {
-      const listed = await env.ORDERS.list();
-      for (const k of listed.keys || []) {
-        const o = await env.ORDERS.get(k.name, { type: 'json' });
-        if (o) consider(o);
-      }
-    } catch { /* KV 不可用则忽略 */ }
-  }
-  if (hit.length === 0) return null;
-  hit.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  return hit[0];
-}
-
-async function confirmPaid(request, env) {
+async function confirmPaid(request: Request): Promise<Response> {
   if (!env.CONFIRM_SECRET) return json({ error: 'confirm not configured' }, 403);
   const secret = request.headers.get('x-confirm-secret') || '';
   if (secret !== env.CONFIRM_SECRET) return json({ error: 'forbidden' }, 403);
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return json({ error: 'bad json' }, 400);
-  }
+  let body: any;
+  try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400); }
   const orderId = body && body.orderId;
   const amountCny = body && body.amountCny;
-  let order;
+  let order: any;
   let matchedBy = 'orderId';
   if (orderId) {
     order = await getOrder(env, orderId);
@@ -639,14 +635,40 @@ async function confirmPaid(request, env) {
   return json({ ok: true, orderId: order.orderId, plan: order.plan, matchedBy });
 }
 
-async function entitlement(orderId, env) {
+// ============================================================
+// 5.5) 卖家面板：列出待确认订单（个人收款码模式，需 CONFIRM_SECRET）
+// ============================================================
+async function sellerPending(request: Request): Promise<Response> {
+  if (!env.CONFIRM_SECRET) return json({ error: 'confirm not configured' }, 403);
+  const secret = request.headers.get('x-confirm-secret') || '';
+  if (secret !== env.CONFIRM_SECRET) return json({ error: 'forbidden' }, 403);
+  const res = await sbReq(
+    'GET',
+    'orders?status=eq.pending&mode=eq.personal&select=payload&order=created_at.desc',
+  );
+  if (!res.ok) return json({ error: 'db_error' }, 502);
+  const rows = await res.json();
+  const list = (Array.isArray(rows) ? rows : [])
+    .map((r: any) => r.payload)
+    .filter((o: any) => o && o.status === 'pending' && o.mode === 'personal')
+    .map((o: any) => ({
+      orderId: o.orderId,
+      plan: o.plan,
+      priceCny: o.priceCny,
+      label: o.label,
+      createdAt: o.createdAt,
+    }));
+  return json({ orders: list });
+}
+
+async function entitlement(orderId: string | null): Promise<Response> {
+  if (!orderId) return json({ isPremium: false }, 400);
   const order = await getOrder(env, orderId);
   if (!order) return json({ isPremium: false }, 404);
   if (order.status !== 'paid') {
     return json({ isPremium: false, source: 'purchase' });
   }
-  // 支付成功后签发 HS256 membership token，前端随 /ai-polish、/ocr 请求带上。
-  const token = await signToken('order:' + orderId, env);
+  const token = await signToken('order:' + orderId);
   return json({
     isPremium: true,
     source: 'purchase',
@@ -655,8 +677,7 @@ async function entitlement(orderId, env) {
   });
 }
 
-// 隐私政策页（支付/会员相关最小信息说明）
-function privacyPage() {
+function privacyPage(): Response {
   const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>隐私政策 - LinguaLink</title>
@@ -686,43 +707,36 @@ function privacyPage() {
 // ============================================================
 // 5) AI 润色（PRO 权益，接便宜 LLM）
 // ============================================================
-
-// OpenAI 兼容聊天补全端点。LLM_BASE_URL 填「拼接 /chat/completions 后正好命中」的基址：
-//   DeepSeek: https://api.deepseek.com/v1
-//   Zhipu GLM: https://open.bigmodel.cn/api/paas/v4
-function llmChatUrl(env) {
+function llmChatUrl(): string {
   const base = (env.LLM_BASE_URL || 'https://api.deepseek.com/v1').replace(/\/+$/, '');
   return `${base}/chat/completions`;
 }
-
-const SCENE_PROMPTS = {
+// OCR 视觉模型端点：默认智谱开放平台（glm-4v-flash 免费视觉模型，OpenAI 兼容）。
+// 与文本润色（DeepSeek）分离，避免把视觉模型错打到 DeepSeek 端点导致静默失败。
+function visionUrl(): string {
+  const base = (env.LLM_VISION_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4').replace(/\/+$/, '');
+  return `${base}/chat/completions`;
+}
+const SCENE_PROMPTS: Record<string, string> = {
   natural: '把下面这段翻译润色得更地道、自然、符合母语表达习惯，不要改变原意。只输出润色后的文本本身。',
   business: '把下面这段翻译润色得更商务、专业、得体，适合工作沟通。只输出润色后的文本本身。',
   academic: '把下面这段翻译润色得更学术、严谨、书面化。只输出润色后的文本本身。',
   concise: '把下面这段翻译润色得更简洁、明了，去掉冗余。只输出润色后的文本本身。',
 };
-
-async function aiPolish(request, env) {
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return json({ error: 'bad json' }, 400);
-  }
+async function aiPolish(request: Request): Promise<Response> {
+  let body: any;
+  try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400); }
   const text = (body.text || '').toString().slice(0, 4000);
   const scene = SCENE_PROMPTS[body.scene] ? body.scene : 'natural';
   if (!text) return json({ error: 'empty text' }, 400);
 
-  // 会员校验与限频已在路由层 requireMember 完成（/ai-polish 必须带有效 membership token）。
-
   const key = env.LLM_API_KEY;
   if (!key) {
-    // DEV 模拟：未配置 LLM 密钥时返回占位，便于前端联调流程。
     return json({ polished: text + '（DEV 模拟润色：配置 LLM_API_KEY 后生效）' });
   }
   try {
     const model = env.LLM_MODEL || 'deepseek-chat';
-    const resp = await fetch(llmChatUrl(env), {
+    const resp = await fetch(llmChatUrl(), {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
       body: JSON.stringify({
@@ -745,9 +759,9 @@ async function aiPolish(request, env) {
 }
 
 // ============================================================
-// 6) 拍照 / 图片 OCR 翻译（PRO 权益，接支持视觉的 LLM）
+// 6) 拍照 / 图片 OCR 翻译（PRO 权益）
 // ============================================================
-function langName(code) {
+function langName(code: string): string {
   if (!code) return '中文';
   const c = code.toLowerCase();
   if (c.startsWith('zh')) return '中文';
@@ -762,36 +776,27 @@ function langName(code) {
   if (c.startsWith('it')) return '意大利文';
   return code;
 }
-
-// 从 LLM 文本里抠出第一个 JSON 对象（兼容 ```json 代码块包装）。
-function extractJson(s) {
+function extractJson(s: string): any | null {
   try {
     const m = s.match(/\{[\s\S]*\}/);
     if (m) return JSON.parse(m[0]);
-  } catch {
-    // ignore
-  }
+  } catch { /* ignore */ }
   return null;
 }
-
-async function ocr(request, env) {
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return json({ error: 'bad json' }, 400);
-  }
+async function ocr(request: Request): Promise<Response> {
+  let body: any;
+  try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400); }
   const image = body.image;
   const to = (body.to || 'zh-CN').toString();
   if (!image || !image.startsWith('data:')) {
     return json({ error: 'invalid image' }, 400);
   }
-  const key = env.LLM_API_KEY;
+  // OCR 视觉模型：优先用独立的视觉 key/base，缺省时回退到文本 LLM 的 key（仍走视觉端点）。
+  const key = env.LLM_VISION_API_KEY || env.LLM_API_KEY;
   if (!key) {
-    // DEV 占位：未配置 LLM 密钥时返回提示，便于前端联调流程。
     return json({
       source: '(DEV) 未配置 OCR 后端',
-      target: '(DEV) 部署时配置 LLM_API_KEY 即生效（需支持视觉的模型）',
+      target: '(DEV) 部署时配置 LLM_VISION_API_KEY（智谱 glm-4v-flash 免费）即生效',
     });
   }
   const langLabel = langName(to);
@@ -800,7 +805,7 @@ async function ocr(request, env) {
     + '不要输出任何解释或 Markdown 代码块。若图片中无文字，source 与 target 均为空字符串。';
   try {
     const model = env.LLM_VISION_MODEL || 'glm-4v-flash';
-    const resp = await fetch(llmChatUrl(env), {
+    const resp = await fetch(visionUrl(), {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
       body: JSON.stringify({
@@ -816,9 +821,13 @@ async function ocr(request, env) {
           },
         ],
         temperature: 0.3,
-        max_tokens: 2000,
+        max_tokens: 1024,
       }),
     });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      return json({ error: 'ocr_upstream', status: resp.status, detail: errText.slice(0, 300) }, 502);
+    }
     const data = await resp.json();
     const content = data?.choices?.[0]?.message?.content?.trim() || '';
     const parsed = extractJson(content);
@@ -834,35 +843,38 @@ async function ocr(request, env) {
 // ============================================================
 // 路由入口
 // ============================================================
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    const p = url.pathname;
-    const channel = url.searchParams.get('channel') || 'wechat';
+Deno.serve(async (request: Request) => {
+  const url = new URL(request.url);
+  // Supabase 调用 URL 形如 https://<ref>.supabase.co/functions/v1/<slug>/<route>
+  // 运行时 pathname 实际为 /<slug>/<route>（/functions/v1 已被网关剥离），
+  // 需去掉 slug 前缀才能让路由匹配。下面兼容 /functions/v1/<slug> 与 /<slug> 两种形态。
+  let p = url.pathname.replace(/^\/functions\/v1\//, '');
+  const segs = p.split('/').filter(Boolean);
+  if (segs.length >= 2) p = '/' + segs.slice(1).join('/');
+  if (p === '') p = '/';
+  const channel = url.searchParams.get('channel') || 'wechat';
 
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: corsHeaders });
-    }
-    if (p === '/ai-polish' && request.method === 'POST') {
-      const denied = await requireMember(request, env);
-      if (denied) return denied;
-      return aiPolish(request, env);
-    }
-    if (p === '/ocr' && request.method === 'POST') {
-      const denied = await requireMember(request, env);
-      if (denied) return denied;
-      return ocr(request, env);
-    }
-    if (p === '/redeem' && request.method === 'POST') return redeem(request, env);
-    if (p === '/create-order' && request.method === 'POST') return createOrder(request, env);
-    if (p === '/pay' && request.method === 'GET')
-      return payPage(url.searchParams.get('orderId'), channel, env);
-    if (p === '/notify' && request.method === 'POST') return notify(request, env);
-    if (p === '/entitlement' && request.method === 'GET')
-      return entitlement(url.searchParams.get('orderId'), env);
-    if (p === '/confirm-paid' && request.method === 'POST') return confirmPaid(request, env);
-    if (p === '/privacy') return privacyPage();
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+  if (p === '/ai-polish' && request.method === 'POST') {
+    const denied = await requireMember(request);
+    if (denied) return denied;
+    return aiPolish(request);
+  }
+  if (p === '/ocr' && request.method === 'POST') {
+    const denied = await requireMember(request);
+    if (denied) return denied;
+    return ocr(request);
+  }
+  if (p === '/redeem' && request.method === 'POST') return redeem(request);
+  if (p === '/create-order' && request.method === 'POST') return createOrder(request);
+  if (p === '/pay' && request.method === 'GET') return payPage(url.searchParams.get('orderId'), channel);
+  if (p === '/notify' && request.method === 'POST') return notify(request);
+  if (p === '/entitlement' && request.method === 'GET') return entitlement(url.searchParams.get('orderId'));
+  if (p === '/confirm-paid' && request.method === 'POST') return confirmPaid(request);
+  if (p === '/seller-pending' && request.method === 'GET') return sellerPending(request);
+  if (p === '/privacy') return privacyPage();
 
-    return new Response('LinguaLink Payment Worker', { status: 200 });
-  },
-};
+  return new Response('LinguaLink Payment Edge Function', { status: 200 });
+});

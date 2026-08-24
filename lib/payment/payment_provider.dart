@@ -21,6 +21,24 @@ const bool kPaymentDevMode = bool.fromEnvironment(
   defaultValue: true,
 );
 
+/// Supabase anon key（公开密钥，可安全内置于客户端）。
+/// 调用 Supabase Edge Function 网关时必须在请求头带 apikey，否则返回 401。
+/// 通过编译参数注入：
+///   flutter build web --dart-define=SUPABASE_ANON_KEY=eyJ...
+const String kSupabaseAnonKey = String.fromEnvironment(
+  'SUPABASE_ANON_KEY',
+  defaultValue: '',
+);
+
+/// 统一构造访问后端的请求头（含 Supabase apikey；个人收款码模式网关强制要求）。
+Map<String, String> backendHeaders([Map<String, String>? extra]) {
+  return <String, String>{
+    'content-type': 'application/json',
+    if (kSupabaseAnonKey.isNotEmpty) 'apikey': kSupabaseAnonKey,
+    if (extra != null) ...extra,
+  };
+}
+
 /// 支付提供方抽象。前端只依赖此接口，真实实现（微信/支付宝）走后端 worker.js。
 abstract class PaymentProvider {
   /// 创建订单，返回用于拉起支付的 Order。
@@ -57,7 +75,7 @@ class WechatAlipayProvider implements PaymentProvider {
 
     final resp = await http.post(
       Uri.parse('$backendUrl/create-order'),
-      headers: {'content-type': 'application/json'},
+      headers: backendHeaders(),
       body: jsonEncode({'plan': plan.id}),
     );
     if (resp.statusCode != 200) {
@@ -65,8 +83,14 @@ class WechatAlipayProvider implements PaymentProvider {
     }
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     return Order(
-      orderId: data['orderId'] as String,
-      payUrl: data['payUrl'] as String,
+      orderId: data['orderId'] as String? ?? '',
+      payUrl: data['payUrl'] as String? ?? '',
+      codeUrl: data['codeUrl'] as String?,
+      mode: data['mode'] as String?,
+      wxQr: data['wxQr'] as String?,
+      aliQr: data['aliQr'] as String?,
+      priceCny: (data['priceCny'] as num?)?.toDouble(),
+      label: data['label'] as String?,
       plan: plan,
     );
   }
@@ -90,6 +114,7 @@ class WechatAlipayProvider implements PaymentProvider {
 
     final resp = await http.get(
       Uri.parse('$backendUrl/entitlement?orderId=$orderId'),
+      headers: backendHeaders(),
     );
     if (resp.statusCode != 200) {
       throw Exception('查询权益失败（${resp.statusCode}）');
@@ -101,6 +126,7 @@ class WechatAlipayProvider implements PaymentProvider {
           ? null
           : DateTime.parse(data['expireAt'] as String),
       source: data['source'] as String?,
+      token: data['token'] as String?,
     );
   }
 }
