@@ -126,6 +126,11 @@
   pre code{white-space:pre}
   .cli-note{font-size:13px;color:var(--muted);margin-top:11px}
   .cli-note a{color:var(--indigo);font-weight:700}
+  .cli-steps{list-style:none;counter-reset:c;margin:0;padding:0;display:flex;flex-direction:column;gap:15px}
+  .cli-steps li{counter-increment:c;position:relative;padding-left:36px;color:var(--muted);font-size:14.5px}
+  .cli-steps li::before{content:counter(c);position:absolute;left:0;top:-1px;width:25px;height:25px;border-radius:50%;background:var(--grad);color:#fff;font-weight:800;font-size:13px;display:grid;place-items:center}
+  .cli-steps b{color:var(--ink)}
+  .cli-steps pre{margin-top:9px}
   .dl-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
   details.src{margin-top:12px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff}
   details.src summary{padding:12px 16px;font-weight:700;cursor:pointer;background:#fafbff;user-select:none}
@@ -360,16 +365,23 @@
             <div class="step"><span class="n"></span><div><b>安装并信任</b><span>安装到手机；设置 → 通用 → VPN 与设备管理 信任描述文件，即可打开使用。</span></div></div>
           </div>
           <div class="cli">
-            <div class="cli-h">或者用命令行签名（仓库自带脚本，适合 Mac + Xcode）</div>
-            <pre><code># 一键重签并无线安装到手机（免费 Apple ID，同 Wi-Fi 即可）
+            <div class="cli-h">用脚本签名并安装（适合有 Mac + Xcode 的用户）</div>
+            <ol class="cli-steps">
+              <li><b>准备环境</b>：一台 Mac，Xcode 里已登录你的<b>免费 Apple ID</b>（Xcode → 设置 → Accounts → 登录），iPhone 与 Mac 连同一 Wi-Fi。</li>
+              <li><b>取文件</b>：把仓库根目录的 3 个脚本和 Release 里的 IPA 放到<b>同一文件夹</b>；终端 <code>cd</code> 进去执行 <code>chmod +x *.sh</code> 赋予执行权限。</li>
+              <li><b>选一种方式签名</b>：
+                <pre><code># 方式 A（你有项目源码）：一键构建 + 免费签名 + 无线装回手机
 ./resign_iphone.sh
 
-# 用你自己的 p12 + 描述文件签名（--fix-id 可改 bundle id 匹配）
+# 方式 B（只签已下载的 IPA）：用你自己的 p12 + 描述文件签名
 ./sign.sh --p12 your.p12 --prov your.mobileprovision --password "P12密码"
 
-# 7 天到期自动检测重签（launchd 每天 9 点触发，满 7 天才动手）
+# 方式 C（自动续期）：每天检测，满 7 天自动重签
 ./auto_resign.sh</code></pre>
-            <p class="cli-note">脚本在仓库 <a href="https://github.com/KingRSW/lingua-link" target="_blank" rel="noopener">GitHub</a> 根目录；免费 Apple ID 签名 7 天有效，到期重签即可。</p>
+              </li>
+              <li><b>信任并打开</b>：手机 设置 → 通用 → VPN 与设备管理 → 信任你的 Apple ID 描述文件，回桌面点开 App 即可。免费签名 7 天有效，到期重跑脚本。</li>
+            </ol>
+            <p class="cli-note">脚本在仓库 <a href="https://github.com/KingRSW/lingua-link" target="_blank" rel="noopener">GitHub</a> 根目录。方式 B 需先把免费 Apple ID 证书从「钥匙串访问」导出为 p12，并在 developer.apple.com 注册设备生成描述文件。嫌麻烦直接用上方「爱思助手」图形界面三步装。</p>
 <div class="dl-row"><a class="btn btn-ghost btn-sm" href="https://raw.githubusercontent.com/KingRSW/lingua-link/main/sign.sh" target="_blank" rel="noopener">⬇ sign.sh</a><a class="btn btn-ghost btn-sm" href="https://raw.githubusercontent.com/KingRSW/lingua-link/main/resign_iphone.sh" target="_blank" rel="noopener">⬇ resign_iphone.sh</a><a class="btn btn-ghost btn-sm" href="https://raw.githubusercontent.com/KingRSW/lingua-link/main/auto_resign.sh" target="_blank" rel="noopener">⬇ auto_resign.sh</a></div>
 <details class="src"><summary>sign.sh 完整源码</summary><pre><code>#!/usr/bin/env bash
 # ============================================================================
