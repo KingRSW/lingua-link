@@ -132,6 +132,21 @@
   details.src summary:hover{color:var(--indigo)}
   details.src pre{margin:0;border-radius:0}
 
+  /* no computer */
+  .tri{grid-template-columns:repeat(3,1fr);gap:20px}
+  @media(max-width:860px){.tri{grid-template-columns:1fr}}
+  .ncard{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:28px;box-shadow:var(--shadow)}
+  .ncard .nic{width:50px;height:50px;border-radius:14px;display:grid;place-items:center;margin-bottom:16px}
+  .nic.ok{background:linear-gradient(135deg,#dcfce7,#bbf7d0);color:#16a34a}
+  .nic.warn{background:linear-gradient(135deg,#fef3c7,#fde68a);color:#b45309}
+  .ncard h4{font-size:18px;margin-bottom:10px}
+  .pill{display:inline-block;font-size:12px;font-weight:800;padding:3px 11px;border-radius:999px;margin-bottom:12px}
+  .pill.ok{background:#dcfce7;color:#16a34a}
+  .pill.warn{background:#fef3c7;color:#b45309}
+  .ncard p{color:var(--muted);font-size:14.5px}
+  .note{margin-top:16px;border-left:4px solid var(--indigo);background:#f6f7ff;border-radius:0 12px 12px 0;padding:14px 16px;font-size:13.5px;color:#3a3f5c}
+  .note b{color:var(--ink)}
+
   /* footer */
   footer{border-top:1px solid var(--line);padding:34px 0;color:var(--muted);font-size:14px}
   .foot{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px}
@@ -151,6 +166,7 @@
       <a href="#features">功能</a>
       <a href="#download">下载</a>
       <a href="#aisi">爱思助手</a>
+      <a href="#nocomputer">无电脑</a>
     </nav>
     <a class="btn btn-primary btn-sm" href="#download">下载安装包</a>
   </div>
@@ -670,6 +686,44 @@ fi
 </code></pre></details>
 
           </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- NO COMPUTER -->
+  <section id="nocomputer">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <div class="kicker">No Computer?</div>
+        <h2>没有电脑，能装吗？</h2>
+        <p>不同平台对「电脑」的依赖不一样。一句话结论：安卓基本免电脑，iOS 侧载本质需要电脑（可借一次）。</p>
+      </div>
+      <div class="grid tri">
+        <div class="ncard reveal">
+          <div class="nic ok">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+          </div>
+          <span class="pill ok">无需电脑</span>
+          <h4>Android 手机直接装</h4>
+          <p>在手机浏览器里打开本页 → 点「下载 APK」→ 允许「未知来源」→ 点开安装即可。全程不需要任何电脑。</p>
+        </div>
+        <div class="ncard reveal">
+          <div class="nic ok">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+          </div>
+          <span class="pill ok">需要 Mac</span>
+          <h4>macOS 在 Mac 上装</h4>
+          <p>DMG 只能在 Mac 上安装：双击挂载后拖入「应用程序」即可；首次打开在「系统设置 → 隐私与安全性」点「仍要打开」。没有 Mac 则无 macOS 版可用。</p>
+        </div>
+        <div class="ncard reveal">
+          <div class="nic warn">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+          </div>
+          <span class="pill warn">需借电脑</span>
+          <h4>iPhone 需电脑侧载</h4>
+          <p>未签名 IPA 必须用电脑上的爱思助手（或 Mac + Xcode）重签后才能装。可以借朋友/网吧的 Windows 或 Mac 装一次；之后 7 天内免电脑使用，到期再借电脑重签。</p>
+          <div class="note"><b>关于 7 天限制：</b>免费 Apple ID 签名 7 天有效，到期后 App 打不开，需重签。重签必须再连一次电脑（爱思助手或 Mac）。若想「装一次长期用」，需用每年 ¥99 的付费开发者账号签名。</div>
         </div>
       </div>
     </div>
