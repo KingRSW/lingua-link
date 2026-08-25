@@ -92,8 +92,9 @@
   .fcard p{color:var(--muted);font-size:14.5px}
 
   /* downloads */
-  .downloads{grid-template-columns:repeat(3,1fr)}
-  @media(max-width:860px){.downloads{grid-template-columns:1fr}}
+  .downloads{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:980px){.downloads{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:560px){.downloads{grid-template-columns:1fr}}
   .dcard{position:relative;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
     padding:28px;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden}
   .dcard .top{display:flex;align-items:center;gap:14px;margin-bottom:6px}
@@ -346,6 +347,19 @@
           <div class="meta">macOS 12+ · DMG · 21 MB</div>
           <p class="desc">拖入「应用程序」即可。未公证，首次打开需在「系统设置 → 隐私与安全性」点「仍要打开」，或终端执行 <code>xattr -rd com.apple.quarantine /Applications/translate_app.app</code>。</p>
           <a class="btn btn-primary" href="https://github.com/KingRSW/lingua-link/releases/download/v1.0.0/lingua-link-1.0.0-macos.dmg">⬇ 下载 DMG</a>
+          <a class="btn btn-ghost sub" href="https://github.com/KingRSW/lingua-link/releases/tag/v1.0.0" target="_blank" rel="noopener">查看全部 Release</a>
+        </div>
+        <!-- Windows -->
+        <div class="dcard reveal">
+          <div class="top">
+            <div class="dic">
+              <svg width="26" height="26" viewBox="0 0 23 23" fill="currentColor"><rect x="1" y="1" width="10" height="10"/><rect x="12" y="1" width="10" height="10"/><rect x="1" y="12" width="10" height="10"/><rect x="12" y="12" width="10" height="10"/></svg>
+            </div>
+            <div><h3>Windows</h3></div>
+          </div>
+          <div class="meta">Windows 10/11 · exe · 安装包</div>
+          <p class="desc">双击安装即可。未签名版本首次打开可能弹 SmartScreen 安全警告，点「仍要运行」即可使用。云端自动构建中。</p>
+          <a class="btn btn-primary" href="https://github.com/KingRSW/lingua-link/releases/tag/v1.0.0" target="_blank" rel="noopener">⬇ 下载 Windows 版</a>
           <a class="btn btn-ghost sub" href="https://github.com/KingRSW/lingua-link/releases/tag/v1.0.0" target="_blank" rel="noopener">查看全部 Release</a>
         </div>
       </div>
