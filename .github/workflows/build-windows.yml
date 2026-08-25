@@ -39,5 +39,6 @@ jobs:
       - name: Upload to Release v1.0.0
         uses: softprops/action-gh-release@v2
         with:
-          tag: v1.0.0
+          tag_name: v1.0.0
+          overwrite_files: true
           files: lingua-link-1.0.0-windows.exe
