@@ -1,6 +1,4 @@
 # 自动把 Lingua Link 下载落地页部署到 GitHub Pages
-# 用法：把本工程推送到 GitHub 的 main 分支，GitHub 会自动发布「下载安装包」落地页。
-# 落地页是单文件（landing/index.html，自包含），不部署 Flutter 网页版（避免和下载页抢同一网址）。
 name: Deploy Web to GitHub Pages
 
 on:
@@ -24,9 +22,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: landing          # 下载落地页在 landing 分支
+      - name: Stage download page
+        run: mkdir -p _site && cp index.html _site/   # upload-pages-artifact 必须传目录
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: index.html      # 单文件落地页（自包含，含内嵌二维码）
+          path: _site           # 目录（里面是 index.html，自包含落地页）
 
   deploy:
     needs: build
