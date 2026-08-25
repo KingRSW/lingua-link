@@ -159,6 +159,11 @@
   footer{border-top:1px solid var(--line);padding:34px 0;color:var(--muted);font-size:14px}
   .foot{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px}
   .foot a{color:var(--indigo);font-weight:700}
+  .foot-qr{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:9px 13px;box-shadow:var(--shadow)}
+  .foot-qr img{width:82px;height:82px;border-radius:8px;display:block}
+  .foot-qr .qt{font-size:12.5px;line-height:1.45}
+  .foot-qr .qt b{display:block;font-size:14px;color:var(--ink);margin-bottom:2px}
+  @media(max-width:560px){.foot-qr{display:none}}
 
   .reveal{opacity:0;transform:translateY(22px);transition:opacity .7s ease,transform .7s ease}
   .reveal.in{opacity:1;transform:none}
@@ -822,6 +827,10 @@ fi
 <footer>
   <div class="wrap foot">
     <div>© 2026 Lingua Link · 随手翻译，多端同步<br><span style="opacity:.78">官方网址：www.LinguaLink.com</span></div>
+    <div class="foot-qr">
+      <img src="data:image/png;base64,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" width="82" height="82" alt="下载页二维码"/>
+      <div class="qt"><b>扫码访问下载页</b>手机相机扫这个码，直接打开本下载页。<br>kingrsw.github.io/lingua-link</div>
+    </div>
     <div>源码与安装包：<a href="https://github.com/KingRSW/lingua-link" target="_blank" rel="noopener">GitHub ↗</a></div>
   </div>
 </footer>
