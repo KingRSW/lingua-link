@@ -1,0 +1,43 @@
+name: Build Windows
+
+# 手动触发（Actions 标签页 → Build Windows → Run workflow）
+# 也可在打 tag v* 时自动触发
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+# 允许 action 写 Release（上传 .exe）
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter (latest stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Pub get
+        run: flutter pub get
+
+      # PAYMENT_BACKEND 请在仓库 Settings → Secrets 里配置（你的 Supabase 函数地址）
+      # 没配也能编过，只是 Windows 端付款功能指向空后端
+      - name: Build Windows (release)
+        run: flutter build windows --release --dart-define=PAYMENT_BACKEND=${{ secrets.PAYMENT_BACKEND }} --dart-define=PAYMENT_DEV=false
+
+      - name: Rename artifact
+        run: Move-Item "build/windows/x64/runner/Release/translate_app.exe" "lingua-link-1.0.0-windows.exe"
+
+      # 追加到已有的 v1.0.0 Release（与 iOS/Android/macOS 放一起）
+      - name: Upload to Release v1.0.0
+        uses: softprops/action-gh-release@v2
+        with:
+          tag: v1.0.0
+          files: lingua-link-1.0.0-windows.exe
