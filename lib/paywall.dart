@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'payment/models.dart';
 import 'payment/payment_provider.dart';
 import 'subscription_service.dart';
+import 'ads_service.dart';
 
 class PaywallScreen extends StatefulWidget {
   const PaywallScreen({super.key});
@@ -79,6 +80,20 @@ class _PaywallScreenState extends State<PaywallScreen> {
     if (ok) {
       await Future.delayed(const Duration(seconds: 1));
       if (mounted) Navigator.of(context).pop();
+    }
+  }
+
+  /// 激励视频：看完即发放一次免费体验，并关闭付费墙（返回 true 给调用方放行）。
+  Future<void> _watchAd() async {
+    final ok = await AdService.showRewarded();
+    if (!mounted) return;
+    if (ok) {
+      AdService.sessionRewardUnlocked = true;
+      Navigator.of(context).pop(true);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('需要看完视频才能免费体验，请稍后再试')),
+      );
     }
   }
 
@@ -396,6 +411,25 @@ class _PaywallScreenState extends State<PaywallScreen> {
             child: Text('微信 / 支付宝收款码支付 · 付款后凭解锁码激活',
                 style: TextStyle(fontSize: 12, color: _sub)),
           ),
+          if (!premium) ...[
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: OutlinedButton.icon(
+                onPressed: _busy ? null : _watchAd,
+                icon: const Icon(Icons.play_circle_outline_rounded),
+                label: const Text('看视频广告，免费体验 1 次 PRO 工具'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF5D6CFF),
+                  side: const BorderSide(color: Color(0xFF5D6CFF)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ],
           if (_msg != null) ...[
             const SizedBox(height: 14),
             Text(_msg!,

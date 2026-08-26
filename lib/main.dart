@@ -39,8 +39,14 @@ import 'payment/payment_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:archive/archive.dart';
+import 'package:flutter_pangle_ads/flutter_pangle_ads.dart';
+import 'ads_service.dart';
 
 void main() {
+  // 确保 Flutter 引擎绑定就绪（广告 SDK 初始化需要）
+  WidgetsFlutterBinding.ensureInitialized();
+  // 初始化穿山甲广告（当前为官方测试位，仅联调；真收钱时替换为自己的位）
+  AdService.init();
   // 把 Dart 异常显示到屏幕上,方便排查 iOS 27 上的白屏(而不是静默白屏)
   ErrorWidget.builder = (details) {
     return MaterialApp(
@@ -474,6 +480,7 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _index = 0;
+  bool _proInterstitialShown = false;
   final _pages = const [
     TranslatePage(),
     ProToolsPage(),
@@ -486,7 +493,18 @@ class _AppShellState extends State<AppShell> {
       body: IndexedStack(index: _index, children: _pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
-        onDestinationSelected: (value) => setState(() => _index = value),
+        onDestinationSelected: (value) async {
+          // 免费用户首次切到「PRO 工具」时展示一次插屏广告（变现）
+          if (value == 1 &&
+              !SubscriptionService.instance.isPremium &&
+              !_proInterstitialShown) {
+            _proInterstitialShown = true;
+            setState(() => _index = value);
+            await AdService.showInterstitial();
+            return;
+          }
+          setState(() => _index = value);
+        },
         height: 70,
         backgroundColor: const Color(0xFFF8F8FC),
         indicatorColor: const Color(0xFFE0E4FF),
@@ -513,13 +531,22 @@ class ProToolsPage extends StatelessWidget {
   const ProToolsPage({super.key});
 
   Future<void> _openTool(BuildContext context, ProFeature tool) async {
-    if (!SubscriptionService.instance.isPremium) {
-      await Navigator.of(context)
-          .push(MaterialPageRoute(builder: (_) => const PaywallScreen()));
+    if (SubscriptionService.instance.isPremium || AdService.sessionRewardUnlocked) {
+      if (AdService.sessionRewardUnlocked) AdService.sessionRewardUnlocked = false;
+      _runTool(context, tool);
       return;
     }
+    final granted = await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const PaywallScreen()));
+    if (granted == true && AdService.sessionRewardUnlocked) {
+      AdService.sessionRewardUnlocked = false;
+      _runTool(context, tool);
+    }
+  }
+
+  void _runTool(BuildContext context, ProFeature tool) {
     if (tool == ProFeature.ocr) {
-      await Navigator.of(context)
+      Navigator.of(context)
           .push(MaterialPageRoute(builder: (_) => const OcrPage()));
     } else {
       ScaffoldMessenger.of(context)
@@ -1689,14 +1716,25 @@ class _TranslatePageState extends State<TranslatePage> {
     }
   }
 
-  /// 统一的 PRO 工具入口：未开通会员先跳付费墙，否则执行对应功能。
+  /// 统一的 PRO 工具入口：会员或「看广告解锁」可直接用；否则跳付费墙，回来若已解锁则放行一次。
   void _openProTool(ProFeature tool) {
-    if (!SubscriptionService.instance.isPremium) {
-      if (!mounted) return;
-      Navigator.of(context)
-          .push(MaterialPageRoute(builder: (_) => const PaywallScreen()));
+    if (!mounted) return;
+    if (SubscriptionService.instance.isPremium || AdService.sessionRewardUnlocked) {
+      if (AdService.sessionRewardUnlocked) AdService.sessionRewardUnlocked = false;
+      _runProTool(tool);
       return;
     }
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const PaywallScreen()))
+        .then((granted) {
+      if (granted == true && mounted) {
+        if (AdService.sessionRewardUnlocked) AdService.sessionRewardUnlocked = false;
+        _runProTool(tool);
+      }
+    });
+  }
+
+  void _runProTool(ProFeature tool) {
     switch (tool) {
       case ProFeature.export:
         _exportResult();
@@ -1717,15 +1755,18 @@ class _TranslatePageState extends State<TranslatePage> {
   }
 
   Future<void> _aiPolish() async {
-    // PRO 权益：未开通会员则引导去付费墙
-    if (!SubscriptionService.instance.isPremium) {
+    // PRO 权益：会员或「看广告解锁」可用；否则跳付费墙，回来若已解锁则放行一次。
+    if (!SubscriptionService.instance.isPremium && !AdService.sessionRewardUnlocked) {
       if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => const PaywallScreen()),
       );
-      if (mounted) setState(() {});
-      return;
+      if (!mounted) return;
+      if (!SubscriptionService.instance.isPremium && !AdService.sessionRewardUnlocked) {
+        return;
+      }
     }
+    if (AdService.sessionRewardUnlocked) AdService.sessionRewardUnlocked = false;
     if (_resultText.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('请先翻译出内容再润色')),
@@ -2393,6 +2434,16 @@ class _TranslatePageState extends State<TranslatePage> {
               _buildActionRow(),
               const SizedBox(height: 22),
               _buildResultCard(),
+              const SizedBox(height: 18),
+              if (!SubscriptionService.instance.isPremium)
+                Center(
+                  child: AdBannerWidget(
+                    posId: AdService.bannerId,
+                    width: 320,
+                    height: 50,
+                  ),
+                ),
+              const SizedBox(height: 12),
             ],
           ),
         ),
