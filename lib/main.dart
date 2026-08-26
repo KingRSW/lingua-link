@@ -456,8 +456,399 @@ class MyApp extends StatelessWidget {
             ),
         useMaterial3: true,
       ),
-      home: const TranslatePage(),
+      home: const AppShell(),
       debugShowCheckedModeBanner: false,
+    );
+  }
+}
+
+// ============================================================
+// 应用主导航
+// ============================================================
+class AppShell extends StatefulWidget {
+  const AppShell({super.key});
+
+  @override
+  State<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<AppShell> {
+  int _index = 0;
+  final _pages = const [
+    TranslatePage(),
+    ProToolsPage(),
+    LiveTranslatePage(),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: IndexedStack(index: _index, children: _pages),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _index,
+        onDestinationSelected: (value) => setState(() => _index = value),
+        height: 70,
+        backgroundColor: const Color(0xFFF8F8FC),
+        indicatorColor: const Color(0xFFE0E4FF),
+        destinations: const [
+          NavigationDestination(
+              icon: Icon(Icons.translate_outlined),
+              selectedIcon: Icon(Icons.translate),
+              label: '翻译'),
+          NavigationDestination(
+              icon: Icon(Icons.auto_awesome_outlined),
+              selectedIcon: Icon(Icons.auto_awesome),
+              label: 'PRO 工具'),
+          NavigationDestination(
+              icon: Icon(Icons.multitrack_audio_outlined),
+              selectedIcon: Icon(Icons.multitrack_audio),
+              label: '实时翻译'),
+        ],
+      ),
+    );
+  }
+}
+
+class ProToolsPage extends StatelessWidget {
+  const ProToolsPage({super.key});
+
+  Future<void> _openTool(BuildContext context, ProFeature tool) async {
+    if (!SubscriptionService.instance.isPremium) {
+      await Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => const PaywallScreen()));
+      return;
+    }
+    if (tool == ProFeature.ocr) {
+      await Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => const OcrPage()));
+    } else {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('${tool.label} 已准备好，请从这里进入')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final premium = SubscriptionService.instance.isPremium;
+    return Scaffold(
+      appBar: AppBar(title: const Text('PRO 工具'), centerTitle: true, actions: [
+        IconButton(
+            icon: const Icon(Icons.workspace_premium_outlined),
+            onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const PaywallScreen()))),
+      ]),
+      body: Container(
+        decoration: const BoxDecoration(
+            gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xFFF7F7FA), Color(0xFFEFF1F5)])),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                  color: const Color(0xFFE9EBFF),
+                  borderRadius: BorderRadius.circular(22)),
+              child: Row(children: [
+                const Icon(Icons.auto_awesome,
+                    color: Color(0xFF5D6CFF), size: 30),
+                const SizedBox(width: 14),
+                Expanded(
+                    child: Text(
+                        premium
+                            ? 'PRO 已开启\n完整工具可直接使用'
+                            : '升级 PRO\n解锁拍照、文档、术语库等工具',
+                        style: const TextStyle(
+                            fontSize: 16,
+                            height: 1.45,
+                            fontWeight: FontWeight.w600))),
+                if (!premium)
+                  FilledButton(
+                      onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => const PaywallScreen())),
+                      child: const Text('升级')),
+              ]),
+            ),
+            const SizedBox(height: 18),
+            const Text('工具箱',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 10),
+            ...ProFeature.values
+                .where((t) => t != ProFeature.voiceChat)
+                .map((tool) => Card(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 6),
+                        leading: CircleAvatar(
+                            backgroundColor: const Color(0xFFE9EBFF),
+                            child: Icon(tool.icon,
+                                color: const Color(0xFF5D6CFF))),
+                        title: Text(tool.label,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w600)),
+                        subtitle: Text(tool == ProFeature.ocr
+                            ? '拍照或从相册选图，识别并翻译文字'
+                            : '专业翻译工作流工具'),
+                        trailing: Icon(
+                            premium
+                                ? Icons.arrow_forward_ios
+                                : Icons.lock_outline,
+                            size: 17),
+                        onTap: () => _openTool(context, tool),
+                      ),
+                    )),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class OcrPage extends StatefulWidget {
+  const OcrPage({super.key});
+  @override
+  State<OcrPage> createState() => _OcrPageState();
+}
+
+class _OcrPageState extends State<OcrPage> {
+  bool _busy = false;
+  String _status = '选择一张图片开始';
+
+  Future<void> _pick(ImageSource source) async {
+    try {
+      final img = await ImagePicker().pickImage(
+          source: source,
+          imageQuality: 80,
+          maxWidth: 1280,
+          maxHeight: 1280,
+          requestFullMetadata: false,
+          preferredCameraDevice: CameraDevice.rear);
+      if (img == null) return;
+      setState(() {
+        _busy = true;
+        _status = '正在识别…';
+      });
+      final bytes = await img.readAsBytes();
+      final backend = kPaymentBackendBaseUrl;
+      if (backend.isEmpty) throw Exception('后端地址未配置');
+      final dataUrl =
+          'data:${img.mimeType ?? 'image/jpeg'};base64,${base64Encode(bytes)}';
+      final resp = await http
+          .post(Uri.parse('$backend/ocr'),
+              headers: SubscriptionService.instance.apiAuthHeaders,
+              body: jsonEncode({'image': dataUrl, 'to': 'zh-CN'}))
+          .timeout(const Duration(seconds: 45));
+      final data =
+          jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+      if (resp.statusCode != 200)
+        throw Exception(data['error'] ?? 'OCR 失败（HTTP ${resp.statusCode}）');
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _status = '识别完成';
+      });
+      await showDialog<void>(
+          context: context,
+          builder: (_) => AlertDialog(
+                  title: const Text('拍照翻译结果'),
+                  content: SingleChildScrollView(
+                      child: Text(
+                          '${data['target'] ?? ''}\n\n原文：${data['source'] ?? ''}')),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('关闭'))
+                  ]));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _status = '识别失败';
+      });
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('拍照失败：$e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('拍照翻译')),
+      body: Center(
+          child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.document_scanner_outlined,
+                    size: 72, color: Color(0xFF5D6CFF)),
+                const SizedBox(height: 16),
+                Text(_status, style: const TextStyle(fontSize: 16)),
+                const SizedBox(height: 24),
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  FilledButton.icon(
+                      onPressed: _busy ? null : () => _pick(ImageSource.camera),
+                      icon: const Icon(Icons.camera_alt),
+                      label: const Text('拍照')),
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                      onPressed:
+                          _busy ? null : () => _pick(ImageSource.gallery),
+                      icon: const Icon(Icons.photo_library_outlined),
+                      label: const Text('相册')),
+                ]),
+                if (_busy) ...[
+                  const SizedBox(height: 24),
+                  const CircularProgressIndicator()
+                ],
+              ]))),
+    );
+  }
+}
+
+class LiveTranslatePage extends StatefulWidget {
+  const LiveTranslatePage({super.key});
+  @override
+  State<LiveTranslatePage> createState() => _LiveTranslatePageState();
+}
+
+class _LiveTranslatePageState extends State<LiveTranslatePage> {
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  final FlutterTts _tts = FlutterTts();
+  bool _ready = false, _listening = false, _busy = false;
+  String _spoken = '', _translated = '点击麦克风开始实时翻译';
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    _ready = await _speech.initialize(onStatus: (s) {
+      if (mounted && (s == 'done' || s == 'notListening'))
+        setState(() => _listening = false);
+    });
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _toggle() async {
+    if (!_ready) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('语音不可用，请检查麦克风权限')));
+      return;
+    }
+    if (_listening) {
+      await _speech.stop();
+      if (mounted) setState(() => _listening = false);
+      return;
+    }
+    setState(() {
+      _listening = true;
+      _spoken = '';
+      _translated = '正在聆听…';
+    });
+    await _speech.listen(onResult: (r) async {
+      if (!mounted) return;
+      setState(() => _spoken = r.recognizedWords);
+      if (r.finalResult && _spoken.trim().isNotEmpty) await _translate();
+    });
+  }
+
+  Future<void> _translate() async {
+    if (_busy || _spoken.trim().isEmpty) return;
+    setState(() {
+      _busy = true;
+      _translated = '翻译中…';
+    });
+    try {
+      final uri = Uri.https('api.mymemory.translated.net', '/get',
+          {'q': _spoken, 'langpair': 'zh-CN|en'});
+      final resp = await http.get(uri).timeout(const Duration(seconds: 20));
+      final d = jsonDecode(utf8.decode(resp.bodyBytes));
+      final t = d['responseData']?['translatedText']?.toString() ?? '翻译失败';
+      if (!mounted) return;
+      setState(() {
+        _translated = t;
+        _busy = false;
+      });
+      await _tts.setLanguage('en-US');
+      await _tts.speak(t);
+    } catch (e) {
+      if (mounted)
+        setState(() {
+          _translated = '翻译失败：$e';
+          _busy = false;
+        });
+    }
+  }
+
+  @override
+  void dispose() {
+    _speech.stop();
+    _tts.stop();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('实时翻译'), centerTitle: true),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('你说的', style: TextStyle(color: Color(0xFF7B8192))),
+                  const SizedBox(height: 8),
+                  Text(_spoken.isEmpty ? '等待语音输入' : _spoken,
+                      style: const TextStyle(fontSize: 20, height: 1.4)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE9EBFF),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('翻译结果',
+                      style: TextStyle(color: Color(0xFF5D6CFF))),
+                  const SizedBox(height: 8),
+                  Text(_translated,
+                      style: const TextStyle(fontSize: 20, height: 1.4)),
+                ],
+              ),
+            ),
+            const Spacer(),
+            IconButton.filled(
+              onPressed: _toggle,
+              iconSize: 42,
+              icon: Icon(_listening ? Icons.stop : Icons.mic),
+            ),
+            const SizedBox(height: 10),
+            Text(_listening ? '正在聆听，再次点击结束' : '点击麦克风开始',
+                style: const TextStyle(color: Color(0xFF7B8192))),
+            const SizedBox(height: 24),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1844,55 +2235,13 @@ class _TranslatePageState extends State<TranslatePage> {
               ),
             ],
             const SizedBox(height: 18),
-            const Divider(),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                const Text('PRO 专属工具',
-                    style:
-                        TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                const SizedBox(width: 8),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFB300),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Text('PRO',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold)),
-                ),
-              ],
+            const SizedBox(height: 6),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ProToolsPage())),
+              icon: const Icon(Icons.auto_awesome, size: 18),
+              label: const Text('打开 PRO 工具箱'),
             ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: ProFeature.values.map((t) {
-                return ActionChip(
-                  avatar:
-                      Icon(t.icon, size: 16, color: const Color(0xFF5D6CFF)),
-                  label: Text(t.label),
-                  onPressed: () => _openProTool(t),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 12),
-            if (SubscriptionService.instance.isPremium)
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: _resultText.isEmpty
-                      ? null
-                      : () => setState(
-                          () => _resultText = _applyGlossary(_resultText)),
-                  icon: const Icon(Icons.menu_book_outlined, size: 16),
-                  label: const Text('应用术语库到当前结果'),
-                ),
-              ),
           ],
         ),
       ),
