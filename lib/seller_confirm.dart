@@ -89,7 +89,14 @@ class _SellerConfirmScreenState extends State<SellerConfirmScreen> {
         final orders = (data['orders'] as List?) ?? [];
         setState(() => _orders = orders.cast<Map<String, dynamic>>());
       } else if (resp.statusCode == 403) {
-        setState(() => _msg = '⚠️ 密钥错误（请重新保存正确的确认密钥）');
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove(_kSecret);
+        if (!mounted) return;
+        setState(() {
+          _secretSaved = false;
+          _orders = [];
+          _msg = '⚠️ 密钥已失效，请重新输入并保存';
+        });
       } else {
         setState(() => _msg = '⚠️ 获取待确认订单失败（HTTP ${resp.statusCode}）');
       }
