@@ -10,8 +10,7 @@ pluginManagement {
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
-        maven("https://maven.aliyun.com/repository/google")
-        maven("https://maven.aliyun.com/repository/gradle-plugin")
+        google()
         mavenCentral()
         maven("https://storage.flutter-io.cn/download.flutter.io")
     }
@@ -20,9 +19,10 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
     repositories {
-        maven("https://maven.aliyun.com/repository/google")
+        google()
         mavenCentral()
         maven("https://storage.flutter-io.cn/download.flutter.io")
+        maven("https://artifact.bytedance.com/repository/pangle")
     }
 }
 
