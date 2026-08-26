@@ -209,9 +209,28 @@ class _SellerConfirmScreenState extends State<SellerConfirmScreen> {
             const SizedBox(height: 10),
             ElevatedButton(onPressed: _saveSecret, child: const Text('保存密钥')),
           ] else ...[
-            const Text(
-              '待确认订单（买家扫码付款后出现，点「确认」即开通会员）',
-              style: TextStyle(color: Colors.grey),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    '待确认订单（买家扫码付款后出现，点「确认」即开通会员）',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final prefs = await SharedPreferences.getInstance();
+                    await prefs.remove(_kSecret);
+                    if (!mounted) return;
+                    setState(() {
+                      _secretSaved = false;
+                      _orders = [];
+                      _msg = '请输入新的确认密钥';
+                    });
+                  },
+                  child: const Text('更换密钥'),
+                ),
+              ],
             ),
             const SizedBox(height: 10),
             if (_loadingOrders) const Center(child: CircularProgressIndicator()),
