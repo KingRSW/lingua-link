@@ -927,7 +927,8 @@ class _TranslatePageState extends State<TranslatePage> {
     if (_isListening) await _speech.stop();
     await _speech.listen(
       localeId: _speechLocaleMap[_langList[fromIdx]['code']] ?? 'en_US',
-      listenOptions: stt.SpeechListenOptions(listenMode: stt.ListenMode.dictation),
+      listenOptions:
+          stt.SpeechListenOptions(listenMode: stt.ListenMode.dictation),
       onResult: (r) {
         if (r.finalResult) completer.complete(r.recognizedWords);
       },
@@ -941,8 +942,8 @@ class _TranslatePageState extends State<TranslatePage> {
           ?.showSnackBar(const SnackBar(content: Text('没听清，请重试')));
       return;
     }
-    final translated =
-        await _voiceTranslate(spoken, _langList[fromIdx]['code']!, _langList[toIdx]['code']!);
+    final translated = await _voiceTranslate(
+        spoken, _langList[fromIdx]['code']!, _langList[toIdx]['code']!);
     if (!mounted) return;
     final ttsLang = _ttsLangMap[_langList[toIdx]['code']] ?? 'en-US';
     await _flutterTts.setLanguage(ttsLang);
@@ -964,8 +965,10 @@ class _TranslatePageState extends State<TranslatePage> {
       if (response.statusCode != 200) return text;
       final data = json.decode(utf8.decode(response.bodyBytes));
       final rd = data is Map<String, dynamic> ? data['responseData'] : null;
-      final t = rd is Map<String, dynamic> ? rd['translatedText'] as String? : null;
-      if (t == null || t.isEmpty || t.startsWith('MYMEMORY WARNING')) return text;
+      final t =
+          rd is Map<String, dynamic> ? rd['translatedText'] as String? : null;
+      if (t == null || t.isEmpty || t.startsWith('MYMEMORY WARNING'))
+        return text;
       return t;
     } catch (_) {
       return text;
@@ -1055,7 +1058,8 @@ class _TranslatePageState extends State<TranslatePage> {
             },
             child: const Text('复制译文'),
           ),
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
         ],
       ),
     );
@@ -1071,11 +1075,13 @@ class _TranslatePageState extends State<TranslatePage> {
         children: [
           SimpleDialogOption(
             onPressed: () => Navigator.pop(c, ImageSource.camera),
-            child: const ListTile(leading: Icon(Icons.camera_alt), title: Text('拍照')),
+            child: const ListTile(
+                leading: Icon(Icons.camera_alt), title: Text('拍照')),
           ),
           SimpleDialogOption(
             onPressed: () => Navigator.pop(c, ImageSource.gallery),
-            child: const ListTile(leading: Icon(Icons.photo_library), title: Text('从相册选择')),
+            child: const ListTile(
+                leading: Icon(Icons.photo_library), title: Text('从相册选择')),
           ),
         ],
       ),
@@ -1083,12 +1089,24 @@ class _TranslatePageState extends State<TranslatePage> {
     if (source == null) return;
     final picker = ImagePicker();
     // 限制尺寸与质量：原图常 3000px+/10MB+，整张传 OCR 会拖垮上传与视觉模型推理（前端 45s 超时内拿不到回包 → 一直转圈）。
-    final img = await picker.pickImage(
-      source: source,
-      imageQuality: 80,
-      maxWidth: 1280,
-      maxHeight: 1280,
-    );
+    XFile? img;
+    try {
+      img = await picker.pickImage(
+        source: source,
+        imageQuality: 80,
+        maxWidth: 1280,
+        maxHeight: 1280,
+        requestFullMetadata: false,
+        preferredCameraDevice: CameraDevice.rear,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack(source == ImageSource.camera
+          ? '无法调用相机：请到 设置 → 隐私与安全性 → 相机，允许 Lingua Link 使用相机'
+          : '无法打开相册：请到 设置 → 隐私与安全性 → 照片，允许 Lingua Link 访问照片');
+      debugPrint('[ocr] image_picker error: $e');
+      return;
+    }
     if (img == null) return;
     final bytes = await img.readAsBytes();
     final mime = img.mimeType ?? 'image/png';
@@ -1138,7 +1156,8 @@ class _TranslatePageState extends State<TranslatePage> {
         return;
       }
       final data = json.decode(utf8.decode(resp.bodyBytes));
-      _showOcrResult(data['source']?.toString() ?? '', data['target']?.toString() ?? '');
+      _showOcrResult(
+          data['source']?.toString() ?? '', data['target']?.toString() ?? '');
     } catch (e) {
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
       progress.dispose();
@@ -1160,7 +1179,8 @@ class _TranslatePageState extends State<TranslatePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('识别原文', style: TextStyle(fontWeight: FontWeight.bold)),
+                const Text('识别原文',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 6),
                 SelectableText(source.isEmpty ? '（未识别到文字）' : source),
                 const SizedBox(height: 16),
@@ -1180,7 +1200,8 @@ class _TranslatePageState extends State<TranslatePage> {
             },
             child: const Text('复制译文'),
           ),
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
         ],
       ),
     );
@@ -1200,7 +1221,8 @@ class _TranslatePageState extends State<TranslatePage> {
       if (docFile == null) return '';
       final xml = utf8.decode(docFile.content as List<int>);
       final withBreaks = xml.replaceAll(RegExp(r'</w:p>'), '\n');
-      final matches = RegExp(r'<w:t[^>]*>(.*?)</w:t>', dotAll: true).allMatches(withBreaks);
+      final matches =
+          RegExp(r'<w:t[^>]*>(.*?)</w:t>', dotAll: true).allMatches(withBreaks);
       final sb = StringBuffer();
       for (final m in matches) {
         sb.write(_xmlUnescape(m.group(1) ?? ''));
@@ -1254,7 +1276,8 @@ class _TranslatePageState extends State<TranslatePage> {
   }
 
   /// 单段走 MyMemory 翻译（文档 / 语音复用）。
-  Future<String> _translateViaMymemory(String text, String from, String to) async {
+  Future<String> _translateViaMymemory(
+      String text, String from, String to) async {
     if (text.trim().isEmpty) return '';
     final uri = Uri.https('api.mymemory.translated.net', '/get', {
       'q': text,
@@ -1265,8 +1288,10 @@ class _TranslatePageState extends State<TranslatePage> {
       if (resp.statusCode != 200) return text;
       final data = json.decode(utf8.decode(resp.bodyBytes));
       final rd = data is Map<String, dynamic> ? data['responseData'] : null;
-      final t = rd is Map<String, dynamic> ? rd['translatedText'] as String? : null;
-      if (t == null || t.isEmpty || t.startsWith('MYMEMORY WARNING')) return text;
+      final t =
+          rd is Map<String, dynamic> ? rd['translatedText'] as String? : null;
+      if (t == null || t.isEmpty || t.startsWith('MYMEMORY WARNING'))
+        return text;
       return t;
     } catch (_) {
       return text;
@@ -1824,10 +1849,12 @@ class _TranslatePageState extends State<TranslatePage> {
             Row(
               children: [
                 const Text('PRO 专属工具',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
                     color: const Color(0xFFFFB300),
                     borderRadius: BorderRadius.circular(8),
@@ -1846,7 +1873,8 @@ class _TranslatePageState extends State<TranslatePage> {
               runSpacing: 8,
               children: ProFeature.values.map((t) {
                 return ActionChip(
-                  avatar: Icon(t.icon, size: 16, color: const Color(0xFF5D6CFF)),
+                  avatar:
+                      Icon(t.icon, size: 16, color: const Color(0xFF5D6CFF)),
                   label: Text(t.label),
                   onPressed: () => _openProTool(t),
                 );
@@ -1859,8 +1887,8 @@ class _TranslatePageState extends State<TranslatePage> {
                 child: OutlinedButton.icon(
                   onPressed: _resultText.isEmpty
                       ? null
-                      : () =>
-                          setState(() => _resultText = _applyGlossary(_resultText)),
+                      : () => setState(
+                          () => _resultText = _applyGlossary(_resultText)),
                   icon: const Icon(Icons.menu_book_outlined, size: 16),
                   label: const Text('应用术语库到当前结果'),
                 ),
@@ -1955,7 +1983,8 @@ class _TranslatePageState extends State<TranslatePage> {
           ),
           IconButton(
             tooltip: '卖家确认',
-            icon: const Icon(Icons.storefront_outlined, color: Color(0xFF5D6CFF)),
+            icon:
+                const Icon(Icons.storefront_outlined, color: Color(0xFF5D6CFF)),
             onPressed: () async {
               await Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const SellerConfirmScreen()),
