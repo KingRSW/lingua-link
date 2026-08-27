@@ -1,0 +1,24 @@
+name: Build Windows (ia32 / 32-bit)
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+jobs:
+  windows-ia32:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+      - run: flutter pub get
+      - run: flutter build windows --release --target-arch=ia32 --dart-define=PAYMENT_DEV=false
+      - run: Move-Item "build/windows/ia32/runner/Release/translate_app.exe" "lingua-link-1.0.0-windows-ia32.exe"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          overwrite_files: true
+          files: lingua-link-1.0.0-windows-ia32.exe
