@@ -36,6 +36,7 @@ import 'paywall.dart';
 import 'redeem_screen.dart';
 import 'seller_confirm.dart';
 import 'payment/payment_provider.dart';
+import 'document_translate_page.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:archive/archive.dart';
@@ -545,12 +546,25 @@ class ProToolsPage extends StatelessWidget {
   }
 
   void _runTool(BuildContext context, ProFeature tool) {
-    if (tool == ProFeature.ocr) {
-      Navigator.of(context)
-          .push(MaterialPageRoute(builder: (_) => const OcrPage()));
-    } else {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('${tool.label} 已准备好，请从这里进入')));
+    switch (tool) {
+      case ProFeature.ocr:
+        Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => const OcrPage()));
+        break;
+      case ProFeature.document:
+        Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const DocumentTranslatePage()));
+        break;
+      case ProFeature.export:
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('导出 / 分享功能即将上线')));
+        break;
+      case ProFeature.glossary:
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('术语库功能即将上线')));
+        break;
+      case ProFeature.voiceChat:
+        break;
     }
   }
 
